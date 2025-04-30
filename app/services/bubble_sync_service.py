@@ -18,7 +18,7 @@ def sync_positions_to_bubble():
 
     for pos in positions:
         instrument = pos["instrument"]
-        trade_ids = pos["long"]["tradeIDs"] + pos["short"]["tradeIDs"]
+        trade_ids = pos["long"].get("tradeIDs", []) + pos["short"].get("tradeIDs", [])
 
         for trade_id in trade_ids:
             # Requête GET pour vérifier si trade_id existe déjà dans Bubble
