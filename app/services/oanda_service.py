@@ -20,6 +20,12 @@ def get_account_balance():
     response = requests.get(url, headers=headers)
     response.raise_for_status()
     return response.json()["account"]["balance"]
+ 
+def get_open_trades():
+    url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/openTrades"
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    return response.json().get("trades", [])
 
 def get_open_positions():
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/openPositions"
