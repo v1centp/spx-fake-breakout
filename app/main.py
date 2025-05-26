@@ -13,5 +13,5 @@ origins = [
 app.include_router(balance.router)
 app.include_router(positions.router)
 app.include_router(orders.router)
-# app.include_router(strategy.router)
+app.include_router(strategy.router)
 app.include_router(sync.router)
