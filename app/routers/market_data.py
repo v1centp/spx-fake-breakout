@@ -34,7 +34,7 @@ async def store_sample_candle(req: TestCandleRequest):
     return {"message": "✅ SPX candle stored successfully"}
  
 @router.get("/candles", response_model=List[dict])
-async def get_candles(limit: int = 10):
+async def get_candles(limit: int = 100000):
     db = get_firestore()
     docs = db.collection("ohlc_1m").order_by("s", direction="DESCENDING").limit(limit).stream()
     return [doc.to_dict() for doc in docs]
