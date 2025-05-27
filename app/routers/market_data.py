@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from app.services.firebase import get_firestore
 from datetime import datetime, timezone
+from typing import List
 
 router = APIRouter()
 
@@ -31,3 +32,9 @@ async def store_sample_candle(req: TestCandleRequest):
     db.collection("ohlc_1m").document(doc_id).set(candle)
 
     return {"message": "✅ SPX candle stored successfully"}
+ 
+@router.get("/candles", response_model=List[dict])
+async def get_candles(limit: int = 10):
+    db = get_firestore()
+    docs = db.collection("ohlc_1m").order_by("s", direction="DESCENDING").limit(limit).stream()
+    return [doc.to_dict() for doc in docs]

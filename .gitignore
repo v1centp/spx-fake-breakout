@@ -12,3 +12,4 @@ package-lock.json
 package.json
 .env
 firebase-service-account.json
+node_modules/
