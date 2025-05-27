@@ -24,7 +24,7 @@ async def store_sample_candle(req: TestCandleRequest):
         "h": 3985.67,
         "l": 3985.67,
         "s": 1678220675805,
-        "e": 1678220675805,
+        "e": 1678220675806,
         "utc_time": datetime.fromtimestamp(1678220675805 / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     }
 
