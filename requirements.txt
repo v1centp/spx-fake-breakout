@@ -4,3 +4,4 @@ requests
 python-dotenv
 firebase-admin
 polygon-api-client
+pytz
