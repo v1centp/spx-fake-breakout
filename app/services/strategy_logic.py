@@ -2,6 +2,7 @@ from app.services.firebase import get_firestore
 from app.services import oanda_service
 from datetime import datetime
 import pytz
+from app.routers.logs import log_to_firestore
 
 def process_new_minute_bar(bar: dict):
     db = get_firestore()
@@ -11,6 +12,7 @@ def process_new_minute_bar(bar: dict):
     # 🕒 Vérification de la fenêtre horaire
     if not (datetime.strptime("09:45", "%H:%M").time() <= ny_time <= datetime.strptime("11:30", "%H:%M").time()):
         print(f"⏱️ {bar['utc_time']} ignorée : hors fenêtre de trading (09:45–11:30 NY)")
+        log_to_firestore(f"⏱️ {bar['utc_time']} ignorée : hors fenêtre de trading (09:45–11:30 NY)")
         return
 
     # ✅ Vérifier si la stratégie est activée
