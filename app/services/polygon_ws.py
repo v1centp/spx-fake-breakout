@@ -48,7 +48,7 @@ def handle_msg(msgs: List[EquityAgg]):
             print(f"✅ Stored {m.symbol} candle at {candle['utc_time']} (in range: {is_opening_range})")
             if not is_opening_range:
                 process_new_minute_bar(candle)
-            if dt_ny.time().strftime("%H:%M") == "10:10":
+            if dt_ny.time().strftime("%H:%M") == "09:45":
                day_str = dt_ny.strftime("%Y-%m-%d")
                print(f"🕒 09:45 NY → Calcul du range pour {day_str}")
                calculate_and_store_opening_range(day_str)
