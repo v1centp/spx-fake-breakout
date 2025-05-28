@@ -38,3 +38,11 @@ async def get_candles(limit: int = 100000):
     db = get_firestore()
     docs = db.collection("ohlc_1m").order_by("s", direction="DESCENDING").limit(limit).stream()
     return [doc.to_dict() for doc in docs]
+
+@router.get("/opening_range/{day}")
+async def get_opening_range(day: str):
+    db = get_firestore()
+    doc = db.collection("opening_range").document(day).get()
+    if not doc.exists:
+        return {}
+    return doc.to_dict()
