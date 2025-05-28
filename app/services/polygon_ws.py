@@ -8,6 +8,7 @@ from app.services.firebase import get_firestore
 from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
+import pytz
 
 load_dotenv()
 
@@ -20,6 +21,11 @@ def handle_msg(msgs: List[EquityAgg]):
         print(f"Received: {type(m)} → {m}")
 
         try:
+            dt_utc = datetime.fromtimestamp(m.end_timestamp / 1000, tz=timezone.utc)
+            dt_ny = dt_utc.astimezone(pytz.timezone("America/New_York"))
+            is_opening_range = dt_ny.time() >= datetime.strptime("09:30", "%H:%M").time() and \
+                               dt_ny.time() <= datetime.strptime("09:45", "%H:%M").time()
+
             candle = {
                 "ev": m.event_type,
                 "sym": m.symbol,
@@ -30,12 +36,15 @@ def handle_msg(msgs: List[EquityAgg]):
                 "l": m.low,
                 "s": m.start_timestamp,
                 "e": m.end_timestamp,
-                "utc_time": datetime.fromtimestamp(m.end_timestamp / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                "utc_time": dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                "day": dt_utc.strftime("%Y-%m-%d"),  # ✅ champ pour filtre par jour
+                "in_opening_range": is_opening_range
             }
 
             doc_id = f"{m.symbol}_{m.end_timestamp}"
             db.collection("ohlc_1m").document(doc_id).set(candle)
-            print(f"✅ Stored {m.symbol} candle at {candle['utc_time']}")
+            print(f"✅ Stored {m.symbol} candle at {candle['utc_time']} (in range: {is_opening_range})")
+
         except Exception as e:
             print(f"⚠️ Error processing message: {e}")
 

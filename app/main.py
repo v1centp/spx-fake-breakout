@@ -29,7 +29,7 @@ app.add_middleware(
 app.include_router(balance.router)
 app.include_router(positions.router)
 app.include_router(orders.router)
-app.include_router(strategy.router)
+app.include_router(strategy.router, prefix="/api")
 app.include_router(market_data.router, prefix="/api")  # ⬅️ Add this line
 
 # Démarrage du WS dans un thread pour ne pas bloquer FastAPI
