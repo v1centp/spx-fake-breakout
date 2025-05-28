@@ -40,9 +40,9 @@ async def get_candles(limit: int = 100000):
     return [doc.to_dict() for doc in docs]
 
 @router.get("/opening_range/{day}")
-async def get_opening_range(day: str):
+def get_opening_range(day: str):
     db = get_firestore()
     doc = db.collection("opening_range").document(day).get()
-    if not doc.exists:
-        return {}
-    return doc.to_dict()
+    if doc.exists:
+        return doc.to_dict()
+    return {"message": "Not found"}, 404
