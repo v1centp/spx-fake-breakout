@@ -1,6 +1,7 @@
 from app.services.firebase import get_firestore
 from datetime import datetime, time
 import pytz
+from app.services.log_service import log_to_firestore
 
 def calculate_and_store_opening_range(day_str: str):
     db = get_firestore()
@@ -26,4 +27,5 @@ def calculate_and_store_opening_range(day_str: str):
         "range_size": range_size,
         "status": "ready"
     })
+    log_to_firestore(f"📊 Opening Range {day_str} — High: {high_15}, Low: {low_15}, Size: {range_size:.2f}")
     return True

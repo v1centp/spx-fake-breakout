@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import pytz
 from app.services.strategy_logic import process_new_minute_bar
 from app.services.range_manager import calculate_and_store_opening_range
+from app.services.log_service import log_to_firestore
 
 load_dotenv()
 
@@ -51,6 +52,7 @@ def handle_msg(msgs: List[EquityAgg]):
             if dt_ny.time().strftime("%H:%M") == "09:45":
                day_str = dt_ny.strftime("%Y-%m-%d")
                print(f"🕒 09:45 NY → Calcul du range pour {day_str}")
+               log_to_firestore(f"🕒 09:45 NY → Calcul du range pour {day_str}")
                calculate_and_store_opening_range(day_str)
 
         except Exception as e:
