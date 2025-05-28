@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 import pytz
+from app.services.strategy_logic import process_new_minute_bar
+
 
 load_dotenv()
 
@@ -44,6 +46,8 @@ def handle_msg(msgs: List[EquityAgg]):
             doc_id = f"{m.symbol}_{m.end_timestamp}"
             db.collection("ohlc_1m").document(doc_id).set(candle)
             print(f"✅ Stored {m.symbol} candle at {candle['utc_time']} (in range: {is_opening_range})")
+            if not is_opening_range:
+                process_new_minute_bar(candle)
 
         except Exception as e:
             print(f"⚠️ Error processing message: {e}")
