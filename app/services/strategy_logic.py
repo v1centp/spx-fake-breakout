@@ -2,7 +2,7 @@ from app.services.firebase import get_firestore
 from app.services import oanda_service
 from datetime import datetime
 import pytz
-from app.services.firebase import log_to_firestore
+from app.services.log_service import log_to_firestore
 
 def process_new_minute_bar(bar: dict):
     db = get_firestore()
