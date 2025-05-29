@@ -54,3 +54,16 @@ def close_order(instrument: str):
     response = requests.put(url, headers=headers, json=data)
     response.raise_for_status()
     return response.json()
+
+def get_latest_price(instrument: str):
+    url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/pricing"
+    params = {"instruments": instrument}
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    prices = response.json()["prices"]
+    if not prices:
+        raise Exception("No pricing data returned by OANDA.")
+    # Use the "bids" and "asks" to compute mid-price
+    bids = float(prices[0]["bids"][0]["price"])
+    asks = float(prices[0]["asks"][0]["price"])
+    return (bids + asks) / 2
