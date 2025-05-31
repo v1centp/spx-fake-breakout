@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.services.firebase import get_firestore
 from datetime import datetime, timezone
 from typing import List
-from app.services.oanda_service import get_latest_price
+from app.services.oanda_service import get_latest_price, list_instruments
 
 router = APIRouter()
 
@@ -55,3 +55,11 @@ def latest_price(instrument: str = Query(...)):
       return {"price": price}
    except Exception as e:
       return {"error": str(e)}
+   
+@router.get("/instruments")
+def get_instruments():
+    try:
+        instruments = list_instruments()
+        return {"instruments": instruments}
+    except Exception as e:
+        return {"error": str(e)}

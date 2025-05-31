@@ -82,3 +82,8 @@ def get_latest_price(instrument: str):
     
     return (bid + ask) / 2
 
+def list_instruments():
+    url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/instruments"
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    return [inst["name"] for inst in response.json()["instruments"]]
