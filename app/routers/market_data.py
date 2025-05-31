@@ -1,10 +1,11 @@
 # app/routers/market_data.py
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from app.services.firebase import get_firestore
 from datetime import datetime, timezone
 from typing import List
+from app.services.oanda_service import get_latest_price
 
 router = APIRouter()
 
@@ -46,3 +47,11 @@ def get_opening_range(day: str):
     if doc.exists:
         return doc.to_dict()
     return {"message": "Not found"}, 404
+ 
+@router.get("/latest-price")
+def latest_price(instrument: str = Query(...)):
+   try:
+      price = get_latest_price(instrument)
+      return {"price": price}
+   except Exception as e:
+      return {"error": str(e)}

@@ -58,12 +58,27 @@ def close_order(instrument: str):
 def get_latest_price(instrument: str):
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/pricing"
     params = {"instruments": instrument}
+
     response = requests.get(url, headers=headers, params=params)
+    
+    # Raise a clear error for authorization failure
+    if response.status_code == 401:
+        raise Exception("Unauthorized access. Check your OANDA API token and permissions.")
+    
     response.raise_for_status()
-    prices = response.json()["prices"]
+    
+    data = response.json()
+    prices = data.get("prices", [])
+    
     if not prices:
-        raise Exception("No pricing data returned by OANDA.")
-    # Use the "bids" and "asks" to compute mid-price
-    bids = float(prices[0]["bids"][0]["price"])
-    asks = float(prices[0]["asks"][0]["price"])
-    return (bids + asks) / 2
+        raise Exception(f"No pricing data returned for instrument: {instrument}")
+    
+    price = prices[0]
+    try:
+        bid = float(price["bids"][0]["price"])
+        ask = float(price["asks"][0]["price"])
+    except (KeyError, IndexError, ValueError) as e:
+        raise Exception(f"Error extracting bid/ask prices: {e}")
+    
+    return (bid + ask) / 2
+
