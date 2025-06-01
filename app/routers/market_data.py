@@ -88,7 +88,7 @@ def api_create_order(req: OrderRequest):
     except Exception as e:
         return {"error": str(e)}
 
-@router.post("/api/test-order")
+@router.post("/test-order")
 async def test_fake_breakout(req: Request):
     data = await req.json()
     direction = data.get("direction")  # "LONG" ou "SHORT"
