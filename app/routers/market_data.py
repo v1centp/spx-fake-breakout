@@ -6,7 +6,7 @@ from app.services.firebase import get_firestore
 from datetime import datetime, timezone
 from typing import List
 from app.services.oanda_service import get_latest_price, create_order
-from app.services.strategy_logic import strategy_logic
+from app.services import strategy_logic
 from fastapi import Request
 
 router = APIRouter()
