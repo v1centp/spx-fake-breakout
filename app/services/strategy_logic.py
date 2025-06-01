@@ -74,7 +74,7 @@ def process_new_minute_bar(bar: dict):
 
     # 🎯 Récupération du prix OANDA
     try:
-        oanda_price = oanda_service.get_latest_price("US500USD")
+        oanda_price = oanda_service.get_latest_price("SPX500_USD")
         entry_price = oanda_price
         print(f"💵 Prix OANDA pour exécution : {entry_price}")
         log_to_firestore(f"💵 Prix OANDA pour exécution : {entry_price}")
