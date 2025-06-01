@@ -3,6 +3,8 @@ from app.services import oanda_service
 from datetime import datetime
 import pytz
 from app.services.log_service import log_to_firestore
+from math import floor
+
 
 def process_new_minute_bar(bar: dict):
     db = get_firestore()
@@ -84,12 +86,40 @@ def process_new_minute_bar(bar: dict):
         return
 
     # 🛡️ Stop Loss & Take Profit
-    sl = entry_price + 10 if direction == "SHORT" else entry_price - 10
-    tp = entry_price - 17.5 if direction == "SHORT" else entry_price + 17.5
-    units = -10 if direction == "SHORT" else 10
+        # 🔁 Conversion du SL (issu du SPX) vers niveau CFD
+    last_spx_close = bar["c"]  # close de la dernière bougie minute SPX
+    spread_factor = entry_price / last_spx_close  # ajustement CFD vs SPX
+
+    sl_spx = low_15 if direction == "LONG" else high_15
+    stop_loss_price = sl_spx * spread_factor
+
+    # 📏 Calcul TP dynamique
+    if direction == "LONG":
+        take_profit_price = entry_price + 1.75 * (entry_price - stop_loss_price)
+    else:
+        take_profit_price = entry_price - 1.75 * (stop_loss_price - entry_price)
+
+    # 📐 Calcul taille de position
+    risk_per_unit = abs(entry_price - stop_loss_price)
+    if risk_per_unit == 0:
+        print("❌ Risque par unité nul, impossible de trader.")
+        log_to_firestore("❌ Risque par unité nul, impossible de trader.")
+        return
+
+    units = floor(50 / risk_per_unit)
+    if direction == "SHORT":
+        units = -units
+
 
     try:
-        oanda_service.create_order("SPX500_USD", units)
+        oanda_service.create_order(
+    instrument="SPX500_USD",
+    entry_price=entry_price,
+    stop_loss_price=stop_loss_price,
+    take_profit_price=take_profit_price,
+    units=units
+)
+
         print(f"✅ Ordre {direction} placé chez OANDA : {units} unités")
         log_to_firestore(f"✅ Ordre {direction} placé chez OANDA : {units} unités")
     except Exception as e:
@@ -101,10 +131,11 @@ def process_new_minute_bar(bar: dict):
     db.collection("trading_days").document(today).set({
         "executed": True,
         "entry": entry_price,
-        "sl": sl,
-        "tp": tp,
+        "sl": round(stop_loss_price, 2),
+        "tp": round(take_profit_price, 2),
         "direction": direction,
         "timestamp": datetime.now().isoformat()
     })
-    print(f"🚀 Signal {direction} exécuté à {entry_price} (SL: {sl}, TP: {tp})")
-    log_to_firestore(f"🚀 Signal {direction} exécuté à {entry_price} (SL: {sl}, TP: {tp})")
+    print(f"🚀 Signal {direction} exécuté à {entry_price} (SL: {round(stop_loss_price, 2)}, TP: {round(take_profit_price, 2)})")
+    log_to_firestore(f"🚀 Signal {direction} exécuté à {entry_price} (SL: {round(stop_loss_price, 2)}, TP: {round(take_profit_price, 2)})")
+

@@ -33,7 +33,7 @@ def get_open_positions():
     response.raise_for_status()
     return response.json()["positions"]
 
-def create_order(instrument: str, units: int):
+def create_order(instrument: str, entry_price: float, stop_loss_price: float, take_profit_price: float, units: int):
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/orders"
     data = {
         "order": {
@@ -41,9 +41,16 @@ def create_order(instrument: str, units: int):
             "instrument": instrument,
             "timeInForce": "FOK",
             "type": "MARKET",
-            "positionFill": "DEFAULT"
+            "positionFill": "DEFAULT",
+            "stopLossOnFill": {
+                "price": str(round(stop_loss_price, 2))
+            },
+            "takeProfitOnFill": {
+                "price": str(round(take_profit_price, 2))
+            }
         }
     }
+
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
     return response.json()

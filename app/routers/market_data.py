@@ -6,6 +6,8 @@ from app.services.firebase import get_firestore
 from datetime import datetime, timezone
 from typing import List
 from app.services.oanda_service import get_latest_price, create_order
+from app.services.strategy_logic import strategy_logic
+from fastapi import Request
 
 router = APIRouter()
 
@@ -85,3 +87,24 @@ def api_create_order(req: OrderRequest):
         return {"message": "✅ Order sent", "details": result}
     except Exception as e:
         return {"error": str(e)}
+
+@router.post("/api/test-order")
+async def test_fake_breakout(req: Request):
+    data = await req.json()
+    direction = data.get("direction")  # "LONG" ou "SHORT"
+
+    # Simule une bougie avec un faux breakout pour forcer un signal
+    bar = {
+        "day": datetime.now().strftime("%Y-%m-%d"),
+        "utc_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "o": 5000,
+        "h": 5100 if direction == "SHORT" else 5050,
+        "l": 4900 if direction == "LONG" else 4950,
+        "c": 5020,  # close dans le range
+        "s": "I:SPX",
+        "e": "minute",
+        "in_opening_range": False
+    }
+
+    strategy_logic.process_new_minute_bar(bar)
+    return {"message": f"🚀 Test ordre {direction} déclenché"}
