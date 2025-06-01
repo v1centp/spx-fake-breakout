@@ -63,3 +63,13 @@ def get_spx_price():
         return {"instrument": "SPX500_USD", "price": price}
     except Exception as e:
         return {"error": str(e)}
+
+@router.get("/instruments")
+def get_instruments():
+    from app.services.oanda_service import list_instruments
+    try:
+        instruments = list_instruments()
+        # Optionnel : filtrer pour afficher seulement les CFDs (indices, or, etc.)
+        return {"instruments": instruments}
+    except Exception as e:
+        return {"error": str(e)}

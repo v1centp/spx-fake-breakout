@@ -86,4 +86,16 @@ def list_instruments():
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/instruments"
     response = requests.get(url, headers=headers)
     response.raise_for_status()
-    return [inst["name"] for inst in response.json()["instruments"]]
+    raw = response.json()["instruments"]
+    
+    # Renvoyer des infos utiles
+    instruments = [
+        {
+            "name": inst["name"],
+            "displayName": inst.get("displayName", ""),
+            "type": inst.get("type", ""),
+            "marginRate": inst.get("marginRate", ""),
+        }
+        for inst in raw
+    ]
+    return instruments
