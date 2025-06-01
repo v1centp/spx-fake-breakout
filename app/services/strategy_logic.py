@@ -12,7 +12,7 @@ def process_new_minute_bar(bar: dict):
     # 🕒 Vérification de la fenêtre horaire
     if not (datetime.strptime("09:45", "%H:%M").time() <= ny_time <= datetime.strptime("11:30", "%H:%M").time()):
         print(f"⏱️ {bar['utc_time']} ignorée : hors fenêtre de trading (09:45–11:30 NY)")
-        log_to_firestore(f"⏱️ {bar['utc_time']} ignorée : hors fenêtre de trading (09:45–11:30 NY)")
+        #log_to_firestore(f"⏱️ {bar['utc_time']} ignorée : hors fenêtre de trading (09:45–11:30 NY)")
         return
 
     # ✅ Vérifier si la stratégie est activée
@@ -89,7 +89,7 @@ def process_new_minute_bar(bar: dict):
     units = -10 if direction == "SHORT" else 10
 
     try:
-        oanda_service.create_order("US500USD", units)
+        oanda_service.create_order("SPX500_USD", units)
         print(f"✅ Ordre {direction} placé chez OANDA : {units} unités")
         log_to_firestore(f"✅ Ordre {direction} placé chez OANDA : {units} unités")
     except Exception as e:

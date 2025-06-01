@@ -11,6 +11,10 @@ router = APIRouter()
 
 class TestCandleRequest(BaseModel):
     test: bool
+    
+class OrderRequest(BaseModel):
+    instrument: str
+    units: int
 
 @router.post("/store-candle")
 async def store_sample_candle(req: TestCandleRequest):
@@ -71,5 +75,13 @@ def get_instruments():
         instruments = list_instruments()
         # Optionnel : filtrer pour afficher seulement les CFDs (indices, or, etc.)
         return {"instruments": instruments}
+    except Exception as e:
+        return {"error": str(e)}
+     
+@router.post("/create-order")
+def api_create_order(req: OrderRequest):
+    try:
+        result = create_order(req.instrument, req.units)
+        return {"message": "✅ Order sent", "details": result}
     except Exception as e:
         return {"error": str(e)}
