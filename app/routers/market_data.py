@@ -56,10 +56,10 @@ def latest_price(instrument: str = Query(...)):
    except Exception as e:
       return {"error": str(e)}
    
-@router.get("/instruments")
-def get_instruments():
+@router.get("/spx-price")
+def get_spx_price():
     try:
-        instruments = list_instruments()
-        return {"instruments": instruments}
+        price = get_latest_price("SPX500_USD")
+        return {"instrument": "SPX500_USD", "price": price}
     except Exception as e:
         return {"error": str(e)}
