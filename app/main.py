@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware 
-from app.routers import balance, positions, orders, strategy, market_data, logs  # ⬅️ Add this
+from app.routers import balance, positions, strategy, market_data, logs  # ⬅️ Add this
 from app.services.polygon_ws import start_polygon_ws
 import threading
 
@@ -28,7 +28,6 @@ app.add_middleware(
 # Registering routers
 app.include_router(balance.router)
 app.include_router(positions.router)
-app.include_router(orders.router)
 app.include_router(strategy.router, prefix="/api")
 app.include_router(market_data.router, prefix="/api")  # ⬅️ Add this line
 app.include_router(logs.router, prefix="/api")  # ⬅️ Add this line
