@@ -3,12 +3,15 @@
 import os
 import requests
 from dotenv import load_dotenv
+from app.services.log_service import log_to_slack
 
 load_dotenv()
 
 OANDA_API_URL = os.getenv("OANDA_API_URL")
 OANDA_API_TOKEN = os.getenv("OANDA_API_TOKEN")
 OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID")
+
+log_to_slack("✅ test slack from client", level="TRADING")
 
 headers = {
     "Authorization": f"Bearer {OANDA_API_TOKEN}",
