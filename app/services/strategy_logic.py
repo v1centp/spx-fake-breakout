@@ -4,9 +4,11 @@ from datetime import datetime
 import pytz
 from app.services.log_service import log_to_firestore
 from math import floor
+from app.services.log_service import log_to_slack
 
 
 def process_new_minute_bar(bar: dict):
+    log_to_slack("✅ test slack from WS", level="TRADING")
     db = get_firestore()
     today = bar["day"]
     ny_time = datetime.strptime(bar["utc_time"], "%Y-%m-%d %H:%M:%S").astimezone(pytz.timezone("America/New_York")).time()
