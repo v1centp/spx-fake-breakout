@@ -10,10 +10,13 @@ def get_logs(limit: int = 50, level: str = Query(None), contains: str = Query(No
     # 🔍 Étendre le volume de recherche si on filtre par contenu
     search_limit = 1000 if contains else limit
 
-    query = db.collection("execution_logs").order_by("timestamp", direction="DESCENDING")
+    query = db.collection("execution_logs")
 
     if level:
         query = query.where("level", "==", level.upper())
+
+    # ⏱️ ORDER BY après WHERE pour éviter problèmes d'index Firestore
+    query = query.order_by("timestamp", direction="DESCENDING")
 
     docs = query.limit(search_limit).stream()
     results = []
@@ -36,7 +39,7 @@ def get_logs(limit: int = 50, level: str = Query(None), contains: str = Query(No
 
         results.append(data)
 
-        # 🎯 Respecter la limite finale
+        # 🎯 Respecter la limite finale après filtre
         if len(results) >= limit:
             break
 
