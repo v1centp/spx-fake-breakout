@@ -6,18 +6,38 @@ router = APIRouter()
 @router.get("/logs")
 def get_logs(limit: int = 50, level: str = Query(None), contains: str = Query(None)):
     db = get_firestore()
+
+    # 🔍 Étendre le volume de recherche si on filtre par contenu
+    search_limit = 1000 if contains else limit
+
     query = db.collection("execution_logs").order_by("timestamp", direction="DESCENDING")
 
     if level:
         query = query.where("level", "==", level.upper())
 
-    docs = query.limit(limit).stream()
+    docs = query.limit(search_limit).stream()
     results = []
 
     for doc in docs:
         data = doc.to_dict()
-        if contains and contains.lower() not in data["message"].lower():
-            continue
+
+        # 🔎 Recherche multi-champs et multi-mots
+        if contains:
+            keywords = contains.lower().split()
+            message = data.get("message", "").lower()
+            timestamp = data.get("timestamp", "").lower()
+            lvl = data.get("level", "").lower()
+
+            if not all(
+                any(kw in field for field in [message, timestamp, lvl])
+                for kw in keywords
+            ):
+                continue
+
         results.append(data)
+
+        # 🎯 Respecter la limite finale
+        if len(results) >= limit:
+            break
 
     return results
