@@ -11,7 +11,6 @@ OANDA_API_URL = os.getenv("OANDA_API_URL")
 OANDA_API_TOKEN = os.getenv("OANDA_API_TOKEN")
 OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID")
 
-log_to_slack("✅ test slack from client", level="TRADING")
 
 headers = {
     "Authorization": f"Bearer {OANDA_API_TOKEN}",
@@ -19,6 +18,7 @@ headers = {
 }
 
 def get_account_balance():
+    log_to_slack("✅ test slack from client", level="TRADING")
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/summary"
     response = requests.get(url, headers=headers)
     response.raise_for_status()
