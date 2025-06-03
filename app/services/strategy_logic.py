@@ -57,8 +57,8 @@ def process_new_minute_bar(bar: dict):
             log_to_firestore(f"📉 Breakout SHORT détecté. Excès: {breakout:.2f}")
             
         else:
-            print(f"↩️ Excès SHORT insuffisant ({breakout:.2f} < 15% du range)")
-            log_to_firestore(f"↩️ Excès SHORT insuffisant ({breakout:.2f} < 15% du range)")
+            log_to_firestore(f"↩️ Excès SHORT insuffisant ({breakout:.2f} < seuil min {0.15 * range_size:.2f})")
+            print(f"↩️ Excès SHORT insuffisant ({breakout:.2f} < seuil min {0.15 * range_size:.2f})")
     elif bar["l"] < low_15 and low_15 <= bar["c"] <= high_15:
         breakout = low_15 - bar["l"]
         if breakout >= 0.15 * range_size:
@@ -66,8 +66,8 @@ def process_new_minute_bar(bar: dict):
             print(f"📈 Breakout LONG détecté. Excès: {breakout:.2f}")
             log_to_firestore(f"📈 Breakout LONG détecté. Excès: {breakout:.2f}")
         else:
-            print(f"↩️ Excès LONG insuffisant ({breakout:.2f} < 15% du range)")
-            log_to_firestore(f"↩️ Excès LONG insuffisant ({breakout:.2f} < 15% du range)")
+            log_to_firestore(f"↩️ Excès LONG insuffisant ({breakout:.2f} < seuil min {0.15 * range_size:.2f})")
+            print(f"↩️ Excès LONG insuffisant ({breakout:.2f} < seuil min {0.15 * range_size:.2f})")
 
     if not direction:
         print("🔍 Aucune condition de breakout valide détectée.")
