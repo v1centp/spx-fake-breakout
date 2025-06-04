@@ -3,6 +3,7 @@
 import os
 import requests
 from dotenv import load_dotenv
+from app.services.oanda_service import oanda_service
 
 load_dotenv()
 
@@ -20,6 +21,13 @@ def get_account_balance():
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/summary"
     response = requests.get(url, headers=headers)
     response.raise_for_status()
+    oanda_service.create_order(
+            instrument="SPX500_USD",
+            entry_price=5979.4,
+            stop_loss_price=5970.0,
+            take_profit_price=5989.0,
+            units=1
+        )
     return response.json()["account"]["balance"]
  
 def get_open_trades():
