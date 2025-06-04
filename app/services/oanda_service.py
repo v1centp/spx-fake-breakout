@@ -3,7 +3,6 @@
 import os
 import requests
 from dotenv import load_dotenv
-from app.services.log_service import log_to_slack
 
 load_dotenv()
 
@@ -18,7 +17,6 @@ headers = {
 }
 
 def get_account_balance():
-    log_to_slack("✅ test slack from client", level="TRADING")
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/summary"
     response = requests.get(url, headers=headers)
     response.raise_for_status()
