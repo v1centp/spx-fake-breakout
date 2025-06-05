@@ -24,7 +24,7 @@ def get_account_balance():
             instrument="SPX500_USD",
             entry_price=5979.4,
             stop_loss_price=5970.0,
-            take_profit_price=5989.0,
+            take_profit_price=5999.0,
             units=1
         )
     return response.json()["account"]["balance"]

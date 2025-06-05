@@ -4,7 +4,6 @@ from datetime import datetime
 import pytz
 from app.services.log_service import log_to_firestore
 from math import floor
-from app.services.log_service import log_to_slack
 
 
 def process_new_minute_bar(bar: dict):
