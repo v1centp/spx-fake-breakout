@@ -4,6 +4,8 @@ import os
 import requests
 from dotenv import load_dotenv
 
+from server.app.services.log_service import log_to_firestore
+
 load_dotenv()
 
 OANDA_API_URL = os.getenv("OANDA_API_URL")
@@ -37,7 +39,7 @@ def get_open_positions():
     return response.json()["positions"]
 
 
-def create_order(instrument: str, entry_price: float, stop_loss_price: float, take_profit_price: float, units: float):
+def create_order(instrument, entry_price, stop_loss_price, take_profit_price, units):
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/orders"
     data = {
         "order": {
@@ -54,7 +56,7 @@ def create_order(instrument: str, entry_price: float, stop_loss_price: float, ta
             }
         }
     }
-
+    log_to_firestore(f"📈 Création d'ordre OANDA DATA : {data, url}", level="OANDA")
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
     return response.json()
