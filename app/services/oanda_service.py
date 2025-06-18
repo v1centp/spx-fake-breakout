@@ -4,7 +4,7 @@ import os
 import requests
 from dotenv import load_dotenv
 
-from server.app.services.log_service import log_to_firestore
+from app.services.log_service import log_to_firestore
 
 load_dotenv()
 
