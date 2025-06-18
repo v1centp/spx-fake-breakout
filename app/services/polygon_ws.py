@@ -70,7 +70,7 @@ def start_polygon_ws():
                 )
                 client.subscribe("AM.I:SPX")
                 print("🔌 Connexion WebSocket SPX ouverte")
-                log_to_firestore("🔌 Connexion WebSocket SPX établie avec succès")
+                # log_to_firestore("🔌 Connexion WebSocket SPX établie avec succès")
                 client.run(handle_msg)
                 print("⚠️ WebSocket fermée, tentative de reconnexion dans 5s...")
             except Exception as e:
