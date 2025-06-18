@@ -1,0 +1,13 @@
+name: Daily Render Deploy
+
+on:
+  schedule:
+    - cron: '0 13 * * 1-5'  # 09:00 NY (13:00 UTC) du lundi au vendredi
+
+jobs:
+  trigger-render-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render Deploy Hook
+        run: |
+          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
