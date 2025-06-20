@@ -106,7 +106,7 @@ def process_new_minute_bar(bar: dict):
 
     direction, breakout = detect_fake_breakout(bar, high_15, low_15, range_size)
     if not direction:
-        log_to_firestore("🔍 Aucune condition de breakout valide détectée.", level="TRADING")
+        log_to_firestore("🔍 Aucune condition de breakout valide détectée.", level="NO_TRADING")
         return
 
     log_to_firestore(f"{'📈' if direction == 'LONG' else '📉'} Breakout {direction} détecté. Excès: {breakout:.2f}", level="TRADING")
