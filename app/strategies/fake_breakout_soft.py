@@ -24,7 +24,9 @@ def process(candle):
     if not range_data or range_data.get("status") != "ready":
         return
 
-    if db.collection("trading_days").document(today).get().to_dict().get("executed"):
+    trade_doc = db.collection("trading_days").document(today).get()
+    if trade_doc.exists and trade_doc.to_dict().get("executed"):
+        log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade déjà exécuté pour {today}", level="TRADING")
         return
 
     high_15, low_15 = range_data["high"], range_data["low"]
