@@ -29,13 +29,3 @@ def execute_trade(entry_price, sl_price, tp_price, units, direction):
     )
     return units
 
-def save_trade_execution(db, today, entry, sl, tp, direction, units):
-    db.collection("trading_days").document(today).set({
-        "executed": True,
-        "entry": entry,
-        "sl": sl,
-        "tp": tp,
-        "direction": direction,
-        "units": units,
-        "timestamp": datetime.now().isoformat()
-    })
