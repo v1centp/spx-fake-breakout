@@ -1,9 +1,12 @@
+#source: app/services/strategy_logic.py
+
 from app.services.firebase import get_firestore
 from app.services import oanda_service
 from datetime import datetime
 import pytz
 from app.services.log_service import log_to_firestore
 from math import floor
+from datetime import timezone
 
 logged_ranges = set()
 
@@ -77,9 +80,9 @@ def save_trade_execution(db, today, entry, sl, tp, direction, units):
 def process_new_minute_bar(bar: dict):
     db = get_firestore()
     today = bar["day"]
-    ny_time = datetime.strptime(bar["utc_time"], "%Y-%m-%d %H:%M:%S").astimezone(
-        pytz.timezone("America/New_York")
-    ).time()
+    utc_dt = datetime.strptime(bar["utc_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    ny_time = utc_dt.astimezone(pytz.timezone("America/New_York")).time()
+
 
     if not is_in_trading_window(ny_time):
         print(f"⏱️ {bar['utc_time']} ignorée : hors fenêtre de trading (09:45–11:30 NY)")

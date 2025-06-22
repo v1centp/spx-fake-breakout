@@ -1,19 +1,31 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from app.services.firebase import get_firestore
 
 router = APIRouter()
 
-@router.get("/strategy/sp500/status")
-def get_sp500_status():
+@router.get("/strategies")
+def get_all_strategies():
     db = get_firestore()
     doc = db.collection("config").document("strategies").get()
-    return {"active": doc.to_dict().get("sp500_fake_breakout_active", False)}
+    return doc.to_dict() or {}
 
-@router.post("/strategy/sp500/toggle")
-def toggle_sp500_strategy():
+@router.post("/strategies/toggle")
+async def toggle_strategy(request: Request):
+    body = await request.json()
+    strategy_key = body.get("strategy")
+
+    if not strategy_key:
+        raise HTTPException(status_code=400, detail="Clé stratégie manquante")
+
     db = get_firestore()
     ref = db.collection("config").document("strategies")
     doc = ref.get()
-    current = doc.to_dict().get("sp500_fake_breakout_active", False)
-    ref.update({"sp500_fake_breakout_active": not current})
-    return {"active": not current}
+    data = doc.to_dict() or {}
+
+    if strategy_key not in data:
+        raise HTTPException(status_code=404, detail="Stratégie inconnue dans Firestore")
+
+    new_state = not data[strategy_key]
+    ref.update({strategy_key: new_state})
+
+    return {strategy_key: new_state}
