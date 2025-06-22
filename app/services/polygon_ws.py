@@ -1,17 +1,15 @@
-# services/polygon_ws.py
-
 from polygon import WebSocketClient
 from polygon.websocket.models import Feed, Market, EquityAgg
 from typing import List
 from threading import Thread
 from app.services.firebase import get_firestore
 from datetime import datetime, timezone
-import os
 from dotenv import load_dotenv
-import pytz
-from app.services.strategy_logic import process_new_minute_bar
 from app.services.range_manager import calculate_and_store_opening_range
 from app.services.log_service import log_to_firestore
+from app.strategies import get_all_strategies
+import os
+import pytz
 
 load_dotenv()
 
@@ -40,23 +38,32 @@ def handle_msg(msgs: List[EquityAgg]):
                 "s": m.start_timestamp,
                 "e": m.end_timestamp,
                 "utc_time": dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                "day": dt_utc.strftime("%Y-%m-%d"),  # ✅ champ pour filtre par jour
+                "day": dt_utc.strftime("%Y-%m-%d"),
                 "in_opening_range": is_opening_range
             }
 
             doc_id = f"{m.symbol}_{m.end_timestamp}"
             db.collection("ohlc_1m").document(doc_id).set(candle)
             print(f"✅ Stored {m.symbol} candle at {candle['utc_time']} (in range: {is_opening_range})")
-            if not is_opening_range:
-                process_new_minute_bar(candle)
+
+            # 📈 À 09:45 NY → on calcule le range
             if dt_ny.time().strftime("%H:%M") == "09:45":
-               day_str = dt_ny.strftime("%Y-%m-%d")
-               print(f"🕒 09:45 NY → Calcul du range pour {day_str}")
-               log_to_firestore(f"🕒 09:45 NY → Calcul du range pour {day_str}")
-               calculate_and_store_opening_range(day_str)
+                day_str = dt_ny.strftime("%Y-%m-%d")
+                print(f"🕒 09:45 NY → Calcul du range pour {day_str}")
+                log_to_firestore(f"🕒 09:45 NY → Calcul du range pour {day_str}")
+                calculate_and_store_opening_range(day_str)
+
+            # ⚙️ Sinon on exécute les stratégies si hors opening range
+            if not is_opening_range:
+                for strategy_fn in get_all_strategies():
+                    try:
+                        strategy_fn(candle)
+                    except Exception as e:
+                        log_to_firestore(f"❌ Erreur stratégie {strategy_fn.__name__} : {e}", level="ERROR")
 
         except Exception as e:
             print(f"⚠️ Error processing message: {e}")
+            log_to_firestore(f"⚠️ Erreur traitement message WebSocket : {e}", level="ERROR")
 
 def start_polygon_ws():
     client = WebSocketClient(
@@ -64,6 +71,6 @@ def start_polygon_ws():
         feed=Feed.RealTime,
         market=Market.Indices
     )
-    client.subscribe("AM.I:SPX")  # Subscribe to SPX index
+    client.subscribe("AM.I:SPX")  # Abonnement au SPX Index
     thread = Thread(target=client.run, args=(handle_msg,), daemon=True)
     thread.start()
