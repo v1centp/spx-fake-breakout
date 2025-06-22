@@ -13,34 +13,28 @@ def process(candle):
     db = get_firestore()
     today = candle["day"]
 
+    # 🕒 Conversion heure NY
     utc_dt = datetime.strptime(candle["utc_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     ny_time = utc_dt.astimezone(pytz.timezone("America/New_York")).time()
 
-    # 🕒 Fenêtre de trading
     if ny_time < datetime.strptime("09:45", "%H:%M").time() or ny_time > datetime.strptime("11:30", "%H:%M").time():
         return
 
-    # ⚙️ Vérifie si la stratégie est activée
+    # ⚙️ Vérifie activation
     config = db.collection("config").document("strategies").get().to_dict()
     if not config.get(STRATEGY_KEY, False):
         return
 
-    # 📊 Range d’ouverture
+    # 📊 Range d'ouverture
     range_data = db.collection("opening_range").document(today).get().to_dict()
     if not range_data or range_data.get("status") != "ready":
-        return
-
-    # 🔁 Vérifie exécution précédente
-    trade_doc = db.collection("trading_days").document(today).collection("trades").document(STRATEGY_KEY).get()
-    if trade_doc.exists:
-        log_to_firestore(f"🔁 [{STRATEGY_KEY}] Déjà exécutée aujourd'hui.", level="TRADING")
         return
 
     high_15 = range_data["high"]
     low_15 = range_data["low"]
     range_size = range_data["range_size"]
 
-    # 🎯 Détection breakout soft
+    # 🎯 Logique de breakout "soft"
     direction, breakout = None, None
     if candle["h"] > high_15 and low_15 <= candle["c"] <= high_15:
         breakout = candle["h"] - high_15
@@ -55,9 +49,15 @@ def process(candle):
         log_to_firestore(f"🔍 [{STRATEGY_KEY}] Aucun breakout valide détecté.", level="NO_TRADING")
         return
 
+    # 🔁 Vérifie exécution seulement après détection signal
+    trade_doc = db.collection("trading_days").document(today).collection("trades").document(STRATEGY_KEY).get()
+    if trade_doc.exists:
+        log_to_firestore(f"🔁 [{STRATEGY_KEY}] Déjà exécutée aujourd'hui.", level="TRADING")
+        return
+
     log_to_firestore(f"[{STRATEGY_KEY}] {'📈' if direction == 'LONG' else '📉'} Signal {direction} détecté. Excès: {breakout:.2f}", level="TRADING")
 
-    # 💵 Récupération prix OANDA
+    # 💰 Récupération prix OANDA
     try:
         entry = get_entry_price()
         log_to_firestore(f"💵 [{STRATEGY_KEY}] Prix OANDA : {entry}", level="OANDA")
@@ -65,15 +65,18 @@ def process(candle):
         log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur récupération prix OANDA : {e}", level="ERROR")
         return
 
-    # 📏 SL / TP
+    # 🛡️ Buffer de sécurité
+    buffer = max(1.0, 0.03 * range_size)
     spread_factor = entry / candle["c"]
-    sl_ref = low_15 if direction == "LONG" else high_15
-    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref * spread_factor, direction)
+    sl_ref = (low_15 - buffer) if direction == "LONG" else (high_15 + buffer)
 
+    # 📏 SL / TP
+    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref * spread_factor, direction)
     if risk_per_unit == 0:
-        log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul, trade ignoré", level="ERROR")
+        log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul, ignoré.", level="ERROR")
         return
 
+    # 🧮 Taille position
     units = compute_position_size(risk_per_unit, RISK_CHF)
     if units < 0.1:
         log_to_firestore(f"❌ [{STRATEGY_KEY}] Taille position trop faible ({units}), ignoré.", level="ERROR")
@@ -82,7 +85,7 @@ def process(candle):
     # ✅ Exécution ordre
     try:
         executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
-        log_to_firestore(f"✅ [{STRATEGY_KEY}] Ordre {direction} exécuté ({executed_units} unités)", level="OANDA")
+        log_to_firestore(f"✅ [{STRATEGY_KEY}] Ordre {direction} exécuté ({executed_units} unités)", level="TRADING")
     except Exception as e:
         log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur exécution ordre : {e}", level="ERROR")
         return
