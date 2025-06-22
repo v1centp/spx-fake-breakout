@@ -1,4 +1,4 @@
-from app.strategies.fake_breakout_soft import process as soft_process
+from app.strategies.fake_breakout_strict import process as strict_process
 
 fake_bar = {
     "ev": "AM",
@@ -15,4 +15,5 @@ fake_bar = {
     "in_opening_range": False
 }
 
-soft_process(fake_bar)
+strict_process(fake_bar)
+

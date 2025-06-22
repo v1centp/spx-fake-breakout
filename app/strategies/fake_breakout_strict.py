@@ -1,30 +1,54 @@
-from app.services.oanda_service import get_latest_price, create_order
+from datetime import datetime, timezone
+import pytz
+from app.services.firebase import get_firestore
 from app.services.log_service import log_to_firestore
-from datetime import datetime
-from math import floor
+from app.services.shared_strategy_tools import (
+    get_entry_price, calculate_sl_tp, compute_position_size, execute_trade
+)
 
 STRATEGY_KEY = "sp500_fake_breakout_strict"
 RISK_CHF = 50
 
-def process(bar, db, today, high_15, low_15, range_size):
+def process(candle):
+    db = get_firestore()
+    today = candle["day"]
+
+    # 🕒 Fenêtre de trading NY
+    utc_dt = datetime.strptime(candle["utc_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    ny_time = utc_dt.astimezone(pytz.timezone("America/New_York")).time()
+    if ny_time < datetime.strptime("09:45", "%H:%M").time() or ny_time > datetime.strptime("11:30", "%H:%M").time():
+        return
+
+    # ⚙️ Active ?
     config = db.collection("config").document("strategies").get().to_dict()
     if not config.get(STRATEGY_KEY, False):
         return
 
+    # 📊 Range dispo ?
+    range_data = db.collection("opening_range").document(today).get().to_dict()
+    if not range_data or range_data.get("status") != "ready":
+        return
+
+    # 🔁 Déjà exécuté ?
     executed_key = "executed_strict"
     trade_doc = db.collection("trading_days").document(today).get()
     if trade_doc.exists and trade_doc.to_dict().get(executed_key, False):
-        log_to_firestore(f"🔁 [{STRATEGY_KEY}] Déjà exécutée aujourd'hui.", level="TRADING")
+        log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade déjà exécuté pour {today}", level="TRADING")
         return
 
+    high_15 = range_data["high"]
+    low_15 = range_data["low"]
+    range_size = range_data["range_size"]
+
+    # 🎯 Logique de breakout strict
     direction, breakout = None, 0
-    if bar["h"] > high_15 and low_15 <= bar["c"] <= high_15:
-        breakout = bar["h"] - high_15
-        if breakout >= 0.15 * range_size and bar["o"] >= low_15:
+    if candle["h"] > high_15 and low_15 <= candle["c"] <= high_15:
+        breakout = candle["h"] - high_15
+        if breakout >= 0.15 * range_size and candle["o"] >= low_15:
             direction = "SHORT"
-    elif bar["l"] < low_15 and low_15 <= bar["c"] <= high_15:
-        breakout = low_15 - bar["l"]
-        if breakout >= 0.15 * range_size and bar["o"] <= high_15:
+    elif candle["l"] < low_15 and low_15 <= candle["c"] <= high_15:
+        breakout = low_15 - candle["l"]
+        if breakout >= 0.15 * range_size and candle["o"] <= high_15:
             direction = "LONG"
 
     if not direction:
@@ -33,50 +57,40 @@ def process(bar, db, today, high_15, low_15, range_size):
 
     log_to_firestore(f"[{STRATEGY_KEY}] {'📈' if direction == 'LONG' else '📉'} Signal {direction} détecté. Excès: {breakout:.2f}", level="TRADING")
 
+    # 💵 Prix OANDA
     try:
-        entry_price = get_latest_price("SPX500_USD")
+        entry_price = get_entry_price()
         log_to_firestore(f"💵 [{STRATEGY_KEY}] Prix OANDA : {entry_price}", level="OANDA")
     except Exception as e:
-        log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur récupération prix OANDA : {e}", level="ERROR")
+        log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur prix OANDA : {e}", level="ERROR")
         return
 
-    spread_factor = entry_price / bar["c"]
+    # 📏 SL / TP
+    spread_factor = entry_price / candle["c"]
     sl_ref = low_15 if direction == "LONG" else high_15
-    sl_price = round(sl_ref * spread_factor, 2)
-    risk_per_unit = abs(entry_price - sl_price)
+    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry_price, sl_ref * spread_factor, direction)
+
     if risk_per_unit == 0:
-        log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul, trade ignoré", level="ERROR")
+        log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul, ignoré.", level="ERROR")
         return
 
-    tp_price = round(entry_price + 1.75 * risk_per_unit if direction == "LONG" else entry_price - 1.75 * risk_per_unit, 2)
-    units = floor(RISK_CHF / risk_per_unit)
-
-    if units < 1:
-        log_to_firestore(f"❌ [{STRATEGY_KEY}] Taille de position trop faible ({units}), ignoré.", level="ERROR")
+    units = compute_position_size(risk_per_unit, RISK_CHF)
+    if units < 0.1:
+        log_to_firestore(f"❌ [{STRATEGY_KEY}] Taille de position trop faible ({units})", level="ERROR")
         return
 
+    # ✅ Exécution
     try:
-        executed_units = -units if direction == "SHORT" else units
-        create_order(
-            instrument="SPX500_USD",
-            entry_price=entry_price,
-            stop_loss_price=sl_price,
-            take_profit_price=tp_price,
-            units=executed_units
-        )
-        log_to_firestore(f"✅ [{STRATEGY_KEY}] Ordre {direction} exécuté ({executed_units} unités)", level="OANDA")
+        executed = execute_trade(entry_price, sl_price, tp_price, units, direction)
+        db.collection("trading_days").document(today).set({
+            executed_key: True,
+            "entry": entry_price,
+            "sl": sl_price,
+            "tp": tp_price,
+            "direction": direction,
+            "units": executed,
+            "timestamp": datetime.now().isoformat()
+        }, merge=True)
+        log_to_firestore(f"🚀 [{STRATEGY_KEY}] Exécuté à {entry_price} (SL: {sl_price}, TP: {tp_price})", level="TRADING")
     except Exception as e:
-        log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur exécution ordre : {e}", level="ERROR")
-        return
-
-    db.collection("trading_days").document(today).set({
-        executed_key: True,
-        "entry": entry_price,
-        "sl": sl_price,
-        "tp": tp_price,
-        "direction": direction,
-        "units": executed_units,
-        "timestamp": datetime.now().isoformat()
-    }, merge=True)
-
-    log_to_firestore(f"🚀 [{STRATEGY_KEY}] Trade exécuté à {entry_price} (SL: {sl_price}, TP: {tp_price})", level="TRADING")
+        log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur exécution : {e}", level="ERROR")
