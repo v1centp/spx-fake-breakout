@@ -34,19 +34,31 @@ def process(candle):
     low_15 = range_data["low"]
     range_size = range_data["range_size"]
 
-    # 🎯 Logique de breakout "soft"
+    # 🎯 Logique de breakout "soft" améliorée
     direction, breakout = None, None
-    if candle["h"] > high_15 and low_15 <= candle["c"] <= high_15:
+    message = None
+    close = candle["c"]
+
+    if candle["h"] > high_15:
         breakout = candle["h"] - high_15
-        if breakout >= 0.15 * range_size:
+        if breakout < 0.15 * range_size:
+            message = f"🔍 [{STRATEGY_KEY}] Breakout haussier détecté mais amplitude insuffisante ({breakout:.2f} < {0.15 * range_size:.2f})"
+        elif not (low_15 <= close <= high_15):
+            message = f"🔍 [{STRATEGY_KEY}] Breakout haussier détecté mais close hors range ({close})"
+        else:
             direction = "SHORT"
-    elif candle["l"] < low_15 and low_15 <= candle["c"] <= high_15:
+
+    elif candle["l"] < low_15:
         breakout = low_15 - candle["l"]
-        if breakout >= 0.15 * range_size:
+        if breakout < 0.15 * range_size:
+            message = f"🔍 [{STRATEGY_KEY}] Breakout baissier détecté mais amplitude insuffisante ({breakout:.2f} < {0.15 * range_size:.2f})"
+        elif not (low_15 <= close <= high_15):
+            message = f"🔍 [{STRATEGY_KEY}] Breakout baissier détecté mais close hors range ({close})"
+        else:
             direction = "LONG"
 
     if not direction:
-        log_to_firestore(f"🔍 [{STRATEGY_KEY}] Aucun breakout valide détecté.", level="NO_TRADING")
+        log_to_firestore(message or f"🔍 [{STRATEGY_KEY}] Aucun breakout valide détecté.", level="NO_TRADING")
         return
 
     # 🔁 Vérifie exécution seulement après détection signal

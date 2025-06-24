@@ -5,9 +5,10 @@ import os
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")  # à stocker dans Render en variable d'env
 def log_to_slack(message: str, level: str = "INFO"):
-    # Ne pas envoyer ce message spécifique sur Slack
-    if level == "NO_TRADING" and "Aucune condition de breakout valide détectée" in message:
+    # 🔕 Tous les logs "NO_TRADING" sont ignorés pour Slack
+    if level == "NO_TRADING":
         return
+
     emoji = {
         "INFO": "ℹ️",
         "ERROR": "❌",
