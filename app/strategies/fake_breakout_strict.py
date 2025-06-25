@@ -45,8 +45,9 @@ def process(candle):
             message = f"🔍 [{STRATEGY_KEY}] Breakout haussier détecté mais amplitude insuffisante ({breakout:.2f} < {0.15 * range_size:.2f})"
         elif not (low_15 <= close <= high_15):
             message = f"🔍 [{STRATEGY_KEY}] Breakout haussier détecté mais close hors range ({close})"
-        elif candle["o"] < low_15:
-            message = f"🔍 [{STRATEGY_KEY}] Breakout haussier détecté mais open sous range ({candle['o']})"
+        elif not (low_15 <= candle["o"] <= high_15):
+            message = f"🔍 [{STRATEGY_KEY}] Breakout haussier détecté mais open hors range ({candle['o']})"
+
         else:
             direction = "SHORT"
 
@@ -56,8 +57,9 @@ def process(candle):
             message = f"🔍 [{STRATEGY_KEY}] Breakout baissier détecté mais amplitude insuffisante ({breakout:.2f} < {0.15 * range_size:.2f})"
         elif not (low_15 <= close <= high_15):
             message = f"🔍 [{STRATEGY_KEY}] Breakout baissier détecté mais close hors range ({close})"
-        elif candle["o"] > high_15:
-            message = f"🔍 [{STRATEGY_KEY}] Breakout baissier détecté mais open au-dessus du range ({candle['o']})"
+        elif not (low_15 <= candle["o"] <= high_15):
+            message = f"🔍 [{STRATEGY_KEY}] Breakout baissier détecté mais open hors range ({candle['o']})"
+
         else:
             direction = "LONG"
 
@@ -76,12 +78,13 @@ def process(candle):
         return
 
     # 🛡️ Buffer SL
-    buffer = max(1.0, 0.03 * range_size)
-    spread_factor = entry / candle["c"]
-    sl_ref = (low_15 - buffer) if direction == "LONG" else (high_15 + buffer)
+    buffer = max(0.3, 0.015 * range_size)
+    spread_factor = entry / candle["c"]  # candle["c"] = close Polygon
+    sl_ref_polygon = (candle["l"] - buffer) if direction == "LONG" else (candle["h"] + buffer)
+    sl_ref_oanda = sl_ref_polygon * spread_factor
 
     # 📏 SL / TP
-    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref * spread_factor, direction)
+    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref_oanda, direction)
     if risk_per_unit == 0:
         log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul, ignoré.", level="ERROR")
         return

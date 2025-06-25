@@ -78,12 +78,13 @@ def process(candle):
         return
 
     # 🛡️ Buffer de sécurité
-    buffer = max(1.0, 0.03 * range_size)
-    spread_factor = entry / candle["c"]
-    sl_ref = (low_15 - buffer) if direction == "LONG" else (high_15 + buffer)
+    buffer = max(0.3, 0.015 * range_size)
+    spread_factor = entry / candle["c"]  # candle["c"] = close Polygon
+    sl_ref_polygon = (candle["l"] - buffer) if direction == "LONG" else (candle["h"] + buffer)
+    sl_ref_oanda = sl_ref_polygon * spread_factor
 
     # 📏 SL / TP
-    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref * spread_factor, direction)
+    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref_oanda, direction)
     if risk_per_unit == 0:
         log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul, ignoré.", level="ERROR")
         return
