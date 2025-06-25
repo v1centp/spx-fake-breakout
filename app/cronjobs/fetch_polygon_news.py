@@ -66,8 +66,6 @@ def fetch_and_store_news():
                 "alert_sent": False,
             })
 
-            print(f"📝 News enregistrée : {title[:60]}...")
-
     except Exception as e:
         print(f"❌ Erreur récupération news Polygon.io : {e}")
 
