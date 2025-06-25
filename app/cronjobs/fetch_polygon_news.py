@@ -1,63 +1,64 @@
 import requests
 import os
-from datetime import datetime, timedelta
-from app.services.firebase import get_firestore  # adapte le chemin si besoin
+from datetime import datetime, timedelta, timezone
+from app.services.firebase import get_firestore
 
-POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
+API_KEY = os.getenv("POLYGON_API_KEY")
 BASE_URL = "https://api.polygon.io/v2/reference/news"
-KEYWORDS = ["S&P", "SP500", "market", "inflation", "rate", "Fed", "Powell", "FOMC", "NASDAQ"]
 
 MEGA_CAP_TICKERS = {
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOG", "GOOGL", "META", "TSLA", "BRK.B", "AVGO", "JPM"
 }
+KEYWORDS = ["S&P", "SP500", "market", "inflation", "rate", "Fed", "Powell", "FOMC", "NASDAQ"]
 
 def fetch_and_store_news():
     db = get_firestore()
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(timezone.utc)
     start_time = now_utc - timedelta(minutes=30)
+    start_time_str = start_time.isoformat().replace("+00:00", "Z")
 
     params = {
         "order": "desc",
         "limit": 100,
         "sort": "published_utc",
-        "published_utc.gte": start_time.isoformat(),
-        "apiKey": POLYGON_API_KEY
+        "published_utc": f">{start_time_str}",
+        "apiKey": API_KEY
     }
 
     try:
         response = requests.get(BASE_URL, params=params)
         response.raise_for_status()
-        articles = response.json().get("results", [])
+        news_items = response.json().get("results", [])
 
-        for news in articles:
-            news_id = news.get("id")
-            title = news.get("title", "")
-            summary = news.get("description", "")  # "summary" may not exist
-            tickers = set(news.get("tickers", []))
-            keywords_match = any(kw.lower() in (title + summary).lower() for kw in KEYWORDS)
-            tickers_match = bool(tickers & MEGA_CAP_TICKERS)
+        for item in news_items:
+            news_id = item.get("id")
+            title = item.get("title", "")
+            description = item.get("description", "")
 
-            if not (keywords_match or tickers_match):
+            # 🔍 Filtrage : contenu lié au marché ou grandes entreprises
+            relevant_tickers = list(set(item.get("tickers", [])) & MEGA_CAP_TICKERS)
+            if not relevant_tickers and not any(kw.lower() in (title + description).lower() for kw in KEYWORDS):
                 continue
 
+            # 🔁 Évite les doublons
             doc_ref = db.collection("polygon_news").document(news_id)
             if doc_ref.get().exists:
                 continue
 
+            # 🗃️ Stockage
             doc_ref.set({
                 "id": news_id,
                 "title": title,
-                "summary": summary,
-                "tickers": list(tickers),
-                "published_utc": news.get("published_utc"),
-                "url": news.get("article_url"),
-                "source": news.get("publisher", {}).get("name", ""),
-                "image_url": news.get("image_url"),
-                "sentiment": news.get("insights", []),
-                "raw": news,
-                "inserted_at": datetime.utcnow().isoformat(),
+                "summary": description,
+                "tickers": relevant_tickers,
+                "published_utc": item.get("published_utc"),
+                "url": item.get("article_url"),
+                "source": item.get("publisher", {}).get("name"),
+                "raw": item,
+                "inserted_at": now_utc.isoformat(),
                 "tags": [],
                 "type": None,
+                "sentiment": item.get("insights", []),
                 "processed_by_gpt": False,
                 "alert_sent": False,
             })
