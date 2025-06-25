@@ -1,10 +1,10 @@
 import os
-import json
 import openai
+import json
 from datetime import datetime
 from app.services.firebase import get_firestore
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 db = get_firestore()
 
 SYSTEM_PROMPT = """
@@ -26,7 +26,7 @@ def enrich_news_with_gpt():
         prompt = f"Titre: {news.get('title')}\nDescription: {news.get('description')}"
 
         try:
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT.strip()},
