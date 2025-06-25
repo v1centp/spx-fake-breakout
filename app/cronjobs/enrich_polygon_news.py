@@ -19,7 +19,7 @@ Réponds toujours en JSON pur.
 """
 
 def enrich_news_with_gpt():
-    docs = db.collection("polygon_news").filter("processed_by_gpt", "==", False).limit(10).stream()
+    docs = db.collection("polygon_news").where("processed_by_gpt", "==", False).limit(10).stream()
 
     for doc in docs:
         news = doc.to_dict()
