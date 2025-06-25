@@ -1,9 +1,7 @@
 import requests
 import os
-import json
 from datetime import datetime, timedelta, timezone
 from app.services.firebase import get_firestore
- 
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
 POLYGON_NEWS_URL = "https://api.polygon.io/v2/reference/news"
@@ -11,6 +9,11 @@ POLYGON_NEWS_URL = "https://api.polygon.io/v2/reference/news"
 MEGA_CAP_TICKERS = {
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOG", "GOOGL", "META", "TSLA", "BRK.B", "AVGO", "JPM"
 }
+
+KEYWORDS = [
+    "S&P", "SP500", "market", "inflation", "rate", "Fed", "Powell", "FOMC",
+    "NASDAQ", "recession", "growth", "unemployment", "equities"
+]
 
 def fetch_and_store_news():
     db = get_firestore()
@@ -28,18 +31,20 @@ def fetch_and_store_news():
 
     try:
         response = requests.get(POLYGON_NEWS_URL, params=params)
-        print(POLYGON_NEWS_URL, params)
         response.raise_for_status()
         articles = response.json().get("results", [])
         print(f"✅ {len(articles)} articles reçus de Polygon")
 
         for news in articles:
             news_id = news.get("id")
+            title = news.get("title", "")
+            description = news.get("description", "")
             tickers = set(news.get("tickers", []))
             mega_tickers = list(tickers & MEGA_CAP_TICKERS)
+            keywords_found = any(kw.lower() in (title + description).lower() for kw in KEYWORDS)
 
-            if not mega_tickers:
-                continue  # Ignore non-mega cap
+            if not mega_tickers and not keywords_found:
+                continue  # On ignore l'article
 
             doc_ref = db.collection("polygon_news").document(news_id)
             if doc_ref.get().exists:
@@ -47,13 +52,12 @@ def fetch_and_store_news():
 
             doc_ref.set({
                 "id": news_id,
-                "title": news.get("title"),
-                "description": news.get("description"),
-                "tickers": mega_tickers,
+                "title": title,
+                "description": description,
+                "tickers": list(tickers),
                 "published_utc": news.get("published_utc"),
                 "url": news.get("article_url"),
                 "source": news.get("publisher", {}).get("name"),
-                "raw": news,
                 "inserted_at": now_utc.isoformat(),
                 "tags": [],
                 "type": None,
@@ -61,6 +65,8 @@ def fetch_and_store_news():
                 "processed_by_gpt": False,
                 "alert_sent": False,
             })
+
+            print(f"📝 News enregistrée : {title[:60]}...")
 
     except Exception as e:
         print(f"❌ Erreur récupération news Polygon.io : {e}")
