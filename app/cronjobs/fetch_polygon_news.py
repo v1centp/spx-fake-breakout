@@ -1,64 +1,61 @@
 import requests
 import os
+import json
 from datetime import datetime, timedelta, timezone
 from app.services.firebase import get_firestore
+ 
 
-API_KEY = os.getenv("POLYGON_API_KEY")
-BASE_URL = "https://api.polygon.io/v2/reference/news"
+POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
+POLYGON_NEWS_URL = "https://api.polygon.io/v2/reference/news"
 
 MEGA_CAP_TICKERS = {
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOG", "GOOGL", "META", "TSLA", "BRK.B", "AVGO", "JPM"
 }
-KEYWORDS = ["S&P", "SP500", "market", "inflation", "rate", "Fed", "Powell", "FOMC", "NASDAQ"]
 
 def fetch_and_store_news():
     db = get_firestore()
     now_utc = datetime.now(timezone.utc)
     start_time = now_utc - timedelta(minutes=30)
-    start_time_str = start_time.isoformat().replace("+00:00", "Z")
+    start_time_str = start_time.isoformat()
 
     params = {
         "order": "desc",
         "limit": 100,
         "sort": "published_utc",
-        "published_utc": f">{start_time_str}",
-        "apiKey": API_KEY
+        "published_utc.gte": start_time_str,
+        "apiKey": POLYGON_API_KEY
     }
 
     try:
-        response = requests.get(BASE_URL, params=params)
+        response = requests.get(POLYGON_NEWS_URL, params=params)
         response.raise_for_status()
-        news_items = response.json().get("results", [])
+        articles = response.json().get("results", [])
 
-        for item in news_items:
-            news_id = item.get("id")
-            title = item.get("title", "")
-            description = item.get("description", "")
+        for news in articles:
+            news_id = news.get("id")
+            tickers = set(news.get("tickers", []))
+            mega_tickers = list(tickers & MEGA_CAP_TICKERS)
 
-            # 🔍 Filtrage : contenu lié au marché ou grandes entreprises
-            relevant_tickers = list(set(item.get("tickers", [])) & MEGA_CAP_TICKERS)
-            if not relevant_tickers and not any(kw.lower() in (title + description).lower() for kw in KEYWORDS):
-                continue
+            if not mega_tickers:
+                continue  # Ignore non-mega cap
 
-            # 🔁 Évite les doublons
             doc_ref = db.collection("polygon_news").document(news_id)
             if doc_ref.get().exists:
                 continue
 
-            # 🗃️ Stockage
             doc_ref.set({
                 "id": news_id,
-                "title": title,
-                "summary": description,
-                "tickers": relevant_tickers,
-                "published_utc": item.get("published_utc"),
-                "url": item.get("article_url"),
-                "source": item.get("publisher", {}).get("name"),
-                "raw": item,
+                "title": news.get("title"),
+                "description": news.get("description"),
+                "tickers": mega_tickers,
+                "published_utc": news.get("published_utc"),
+                "url": news.get("article_url"),
+                "source": news.get("publisher", {}).get("name"),
+                "raw": news,
                 "inserted_at": now_utc.isoformat(),
                 "tags": [],
                 "type": None,
-                "sentiment": item.get("insights", []),
+                "sentiment": news.get("insights", []),
                 "processed_by_gpt": False,
                 "alert_sent": False,
             })
