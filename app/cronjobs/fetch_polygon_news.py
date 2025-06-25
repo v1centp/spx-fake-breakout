@@ -28,6 +28,7 @@ def fetch_and_store_news():
 
     try:
         response = requests.get(POLYGON_NEWS_URL, params=params)
+        print(POLYGON_NEWS_URL, params)
         response.raise_for_status()
         articles = response.json().get("results", [])
         print(f"✅ {len(articles)} articles reçus de Polygon")
