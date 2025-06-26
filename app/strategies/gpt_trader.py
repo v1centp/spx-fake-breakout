@@ -10,13 +10,11 @@ from app.services.firebase import get_firestore
 from app.services.log_service import log_to_firestore
 from app.services.shared_strategy_tools import (
     get_entry_price,
-    calculate_sl_tp,
     compute_position_size,
     execute_trade
 )
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 STRATEGY_KEY = "gpt_trader"
 RISK_CHF = 50
 
@@ -66,15 +64,20 @@ def process(candle):
 
     prompt = (
         f"Historique récent des bougies (UTC) :\n{history_text}\n\n"
-        f"Range des 15 premières minutes : High = {high_15}, Low = {low_15}\n"
+        f"Range d'ouverture : High = {high_15}, Low = {low_15}\n"
         f"Dernière bougie : o={candle['o']}, h={candle['h']}, l={candle['l']}, c={candle['c']}\n"
         f"News importantes du jour :\n{safe_news}\n\n"
-        "Analyse les données et dis-moi si je dois entrer un trade maintenant.\n"
-        "Réponds uniquement avec un JSON de cette forme :\n"
+        "Dois-je entrer un trade ? Si oui, choisis :\n"
+        "- direction: long ou short\n"
+        "- sl_ref: le niveau de stop idéal (technique)\n"
+        "- tp_ratio: ratio TP/SL recommandé (au moins 2.0)\n"
+        "Réponds uniquement avec un JSON de ce format :\n"
         '{\n'
         '  "prendre_position": true ou false,\n'
         '  "direction": "long" ou "short",\n'
-        '  "justification": "ta justification détaillée"\n'
+        '  "sl_ref": float,\n'
+        '  "tp_ratio": float,\n'
+        '  "justification": "explication concise"\n'
         '}'
     )
 
@@ -85,7 +88,7 @@ def process(candle):
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Tu analyses bougies et news pour détecter des breakout ou fake breakout et prendre un trade intraday."},
+                {"role": "system", "content": "Tu es un trader professionnel. Tu aides à placer des trades intraday en analysant les bougies et les news. Respecte toujours un TP ratio ≥ 2."},
                 {"role": "user", "content": prompt.strip()}
             ],
             temperature=0.3
@@ -101,34 +104,37 @@ def process(candle):
 
         decision = json.loads(json_match.group())
         if not decision.get("prendre_position", False):
-            print("🟡 GPT ne recommande pas de prise de position.")
             log_to_firestore(f"🟡 [{STRATEGY_KEY}] Pas de position recommandée", level="TRADING")
             return
 
         direction = decision["direction"].upper()
+        sl_ref = float(decision["sl_ref"])
+        tp_ratio = float(decision["tp_ratio"])
 
-        # 🚫 Vérifie si 5 trades déjà exécutés pour cette stratégie
-        trades_today = db.collection("trading_days").document(today).collection("trades") \
-            .where("strategy", "==", STRATEGY_KEY).stream()
-        trades_list = list(trades_today)
-        if len(trades_list) >= 5:
-            log_to_firestore(f"🚫 [{STRATEGY_KEY}] 5 trades déjà exécutés aujourd'hui", level="TRADING")
-            return
-
+        # 📈 Prix d'entrée actuel
         entry = get_entry_price()
-        sl_ref = candle["l"] - 5 if direction == "LONG" else candle["h"] + 5
-        sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref, direction)
+        risk_per_unit = abs(entry - sl_ref)
 
-        if risk_per_unit == 0:
-            log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul", level="ERROR")
+        if risk_per_unit == 0 or tp_ratio < 1.5:
+            log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul ou ratio trop faible", level="ERROR")
             return
 
-        units = compute_position_size(risk_per_unit, RISK_CHF)
-        print(f"📊 Entry: {entry}, SL: {sl_price}, TP: {tp_price}, Units: {units}")
-        log_to_firestore(f"[DEBUG] Entry={entry}, SL={sl_price}, TP={tp_price}, Units={units}", level="INFO")
+        tp_price = (
+            entry + tp_ratio * risk_per_unit if direction == "LONG"
+            else entry - tp_ratio * risk_per_unit
+        )
 
+        sl_price = sl_ref
+        units = compute_position_size(risk_per_unit, RISK_CHF)
         if units < 0.1:
             log_to_firestore(f"❌ [{STRATEGY_KEY}] Position trop petite ({units})", level="ERROR")
+            return
+
+        # 🔁 Limite de 5 trades max pour cette stratégie
+        trades_today = db.collection("trading_days").document(today).collection("trades") \
+            .where("strategy", "==", STRATEGY_KEY).stream()
+        if len(list(trades_today)) >= 5:
+            log_to_firestore(f"🚫 [{STRATEGY_KEY}] 5 trades déjà exécutés aujourd'hui", level="TRADING")
             return
 
         executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
@@ -144,6 +150,8 @@ def process(candle):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "meta": {
                 "justification": decision.get("justification"),
+                "tp_ratio": tp_ratio,
+                "sl_ref": sl_ref,
                 "prendre_position": True
             }
         })
