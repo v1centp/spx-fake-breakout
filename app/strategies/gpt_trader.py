@@ -20,24 +20,29 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 STRATEGY_KEY = "gpt_trader"
 RISK_CHF = 50
 
+def get_candle_history(db, day):
+    candles = db.collection("ohlc_1m").where("day", "==", day).order_by("utc_time").stream()
+    return [
+        {"t": c.to_dict()["utc_time"], "o": c.to_dict()["o"], "h": c.to_dict()["h"],
+         "l": c.to_dict()["l"], "c": c.to_dict()["c"]}
+        for c in candles
+    ]
+
 def process(candle):
     db = get_firestore()
     today = candle["day"]
 
-    # ⏱️ Vérifie plage horaire (entre 09:45 et 11:30 NY)
     utc_dt = datetime.strptime(candle["utc_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     ny_time = utc_dt.astimezone(pytz.timezone("America/New_York")).time()
     if ny_time < datetime.strptime("09:45", "%H:%M").time() or ny_time > datetime.strptime("11:30", "%H:%M").time():
         print("⏱️ En dehors de la fenêtre de trading.")
         return
 
-    # ✅ Vérifie activation dans Firestore
     config = db.collection("config").document("strategies").get().to_dict()
     if not config.get(STRATEGY_KEY, False):
         print("❌ Stratégie non activée.")
         return
 
-    # 📊 Vérifie présence du range
     range_doc = db.collection("opening_range").document(today).get()
     if not range_doc.exists:
         print("❌ Range d'ouverture non trouvé.")
@@ -45,17 +50,19 @@ def process(candle):
     range_data = range_doc.to_dict()
     high_15, low_15 = range_data["high"], range_data["low"]
 
-    # 📰 Récupère les news pertinentes
     news_docs = db.collection("all_news") \
         .where("impact_score", ">=", 0.6) \
         .where("type", "in", ["macro", "breaking"]) \
         .where("fetched_at", ">=", f"{today}T00:00:00Z") \
         .stream()
     news_summary = "\n".join([n.to_dict().get("summary", "") for n in news_docs])
-
-    # 🤖 Génère le prompt
     safe_news = html.escape(news_summary).replace('"', "'")
+
+    history = get_candle_history(db, today)
+    history_text = "\n".join([f"{c['t']} - o:{c['o']} h:{c['h']} l:{c['l']} c:{c['c']}" for c in history[-30:]])
+
     prompt = (
+        f"Historique récent des bougies (UTC) :\n{history_text}\n\n"
         f"Range des 15 premières minutes : High = {high_15}, Low = {low_15}\n"
         f"Dernière bougie : o={candle['o']}, h={candle['h']}, l={candle['l']}, c={candle['c']}\n"
         f"News importantes du jour :\n{safe_news}\n\n"
@@ -97,13 +104,11 @@ def process(candle):
 
         direction = decision["direction"].upper()
 
-        # 🚫 Limite de 5 trades par jour
         trades_today = list(db.collection("trading_days").document(today).collection("trades").stream())
         if len(trades_today) >= 5:
             log_to_firestore(f"🚫 [{STRATEGY_KEY}] 5 trades déjà exécutés aujourd'hui", level="TRADING")
             return
 
-        # 🔁 Empêche de reprendre un trade identique
         for t in trades_today:
             t_data = t.to_dict()
             if t_data.get("direction") == direction:
