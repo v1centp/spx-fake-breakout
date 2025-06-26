@@ -1,4 +1,7 @@
 import os
+import json
+import html
+import re
 from datetime import datetime, timezone
 import pytz
 from openai import OpenAI
@@ -21,49 +24,55 @@ def process(candle):
     db = get_firestore()
     today = candle["day"]
 
-    # Vérifie plage horaire (entre 09:45 et 11:30 NY)
+    # ⏱️ Vérifie plage horaire (entre 09:45 et 11:30 NY)
     utc_dt = datetime.strptime(candle["utc_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     ny_time = utc_dt.astimezone(pytz.timezone("America/New_York")).time()
     if ny_time < datetime.strptime("09:45", "%H:%M").time() or ny_time > datetime.strptime("11:30", "%H:%M").time():
+        print("⏱️ En dehors de la fenêtre de trading.")
         return
 
-    # Vérifie activation dans Firestore
+    # ✅ Vérifie activation dans Firestore
     config = db.collection("config").document("strategies").get().to_dict()
     if not config.get(STRATEGY_KEY, False):
+        print("❌ Stratégie non activée.")
         return
 
-    # Vérifie présence du range
+    # 📊 Vérifie présence du range
     range_doc = db.collection("opening_range").document(today).get()
     if not range_doc.exists:
+        print("❌ Range d'ouverture non trouvé.")
         return
     range_data = range_doc.to_dict()
     high_15, low_15 = range_data["high"], range_data["low"]
 
-    # Récupère les news pertinentes
+    # 📰 Récupère les news pertinentes
     news_docs = db.collection("polygon_news") \
         .where("impact_score", ">=", 0.6) \
         .where("type", "in", ["macro", "breaking"]) \
         .where("published_utc", ">=", f"{today}T00:00:00Z") \
         .stream()
-
     news_summary = "\n".join([n.to_dict().get("summary", "") for n in news_docs])
 
-    # Génère le prompt pour GPT
-    prompt = f"""
-    Tu es un day trader expérimenté. Voici les données :
-    - Range des 15 premières minutes : High = {high_15}, Low = {low_15}
-    - Dernière bougie : open = {candle['o']}, high = {candle['h']}, low = {candle['l']}, close = {candle['c']}
-    - News du jour :\n{news_summary}
+    # 🤖 Génère le prompt
+    safe_news = html.escape(news_summary).replace('"', "'")
+    prompt = (
+        f"Range des 15 premières minutes : High = {high_15}, Low = {low_15}\n"
+        f"Dernière bougie : o={candle['o']}, h={candle['h']}, l={candle['l']}, c={candle['c']}\n"
+        f"News importantes du jour :\n{safe_news}\n\n"
+        "Analyse les données et dis-moi si je dois entrer un trade maintenant.\n"
+        "Réponds uniquement avec un JSON (aucun texte en dehors du JSON) de cette forme :\n"
+        '{\n'
+        '  "direction": "long" ou "short",\n'
+        '  "justification": "ta justification détaillée",\n'
+        '  "confidence": nombre entre 0.1 et 1.0\n'
+        '}\n'
+        "Si tu veux expliquer ta décision, mets tout dans le champ 'justification'."
+    )
 
-    Faut-il entrer en position maintenant ? Réponds en JSON :
-    {{
-      "direction": "long" ou "short",
-      "justification": "...",
-      "risk_level": float (0.1 à 1.0)
-    }}
-    """
+    print("📄 Prompt généré :", prompt)
 
     try:
+        print("📤 Envoi du prompt à GPT...")
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -72,9 +81,18 @@ def process(candle):
             ],
             temperature=0.3
         )
+        gpt_reply = response.choices[0].message.content.strip()
+        print("📥 Réponse GPT brute :", gpt_reply)
+        log_to_firestore(f"📥 [{STRATEGY_KEY}] Réponse brute : {gpt_reply}", level="GPT")
 
-        decision = eval(response.choices[0].message.content.strip())
-        if decision.get("risk_level", 0) < 0.5:
+        json_match = re.search(r"{.*}", gpt_reply, re.DOTALL)
+        if not json_match:
+            log_to_firestore(f"❌ [{STRATEGY_KEY}] JSON introuvable dans réponse GPT", level="ERROR")
+            return
+
+        decision = json.loads(json_match.group())
+        if decision.get("confidence", 0) < 0.6:
+            print("🟡 Confiance trop faible, pas de trade.")
             return
 
         direction = decision["direction"].upper()
@@ -87,11 +105,14 @@ def process(candle):
             return
 
         units = compute_position_size(risk_per_unit, RISK_CHF)
+        print(f"📊 Calculs - Entry: {entry}, SL: {sl_price}, TP: {tp_price}, Risk/unit: {risk_per_unit}, Units: {units}")
+        log_to_firestore(f"[DEBUG] Entry={entry}, SL={sl_price}, TP={tp_price}, Risk/Unit={risk_per_unit}, Units={units}", level="INFO")
+
         if units < 0.1:
             log_to_firestore(f"❌ [{STRATEGY_KEY}] Position trop petite ({units})", level="ERROR")
             return
 
-        # Vérifie si déjà exécutée
+        # 📆 Vérifie si déjà exécutée
         trade_doc = db.collection("trading_days").document(today).collection("trades").document(STRATEGY_KEY).get()
         if trade_doc.exists:
             log_to_firestore(f"🔁 [{STRATEGY_KEY}] Déjà exécuté aujourd'hui", level="TRADING")
@@ -109,9 +130,10 @@ def process(candle):
             "timestamp": datetime.now().isoformat(),
             "meta": {
                 "justification": decision.get("justification"),
-                "risk_level": decision.get("risk_level")
+                "confidence": decision.get("confidence")
             }
         })
 
     except Exception as e:
         log_to_firestore(f"❌ [{STRATEGY_KEY}] Erreur GPT : {e}", level="ERROR")
+        print(f"❌ Erreur GPT : {e}")

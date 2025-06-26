@@ -1,3 +1,9 @@
+import os
+from dotenv import load_dotenv
+
+# Charge les variables d'environnement du fichier .env
+load_dotenv()
+
 from app.strategies.gpt_trader import process as gpt_process
 
 fake_bar = {
@@ -5,12 +11,12 @@ fake_bar = {
     "sym": "I:SPX",
     "op": 6005.0,
     "o": 6010.0,
-    "c": 6008.5,              # ✅ clôture dans le range
-    "h": 6022.0,              # ✅ dépasse high_15 (ex: 6018.2)
+    "c": 6008.5,
+    "h": 6022.0,
     "l": 6003.0,
     "s": 1750430580000,
     "e": 1750430640000,
-    "utc_time": "2025-06-20 14:44:00",  # NY = 10:44
+    "utc_time": "2025-06-25 14:44:00",
     "day": "2025-06-25",
     "in_opening_range": False
 }
