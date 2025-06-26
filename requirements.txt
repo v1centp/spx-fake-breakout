@@ -8,3 +8,4 @@ pytz
 requests
 openai
 beautifulsoup4
+html5lib
