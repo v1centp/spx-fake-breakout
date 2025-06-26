@@ -15,4 +15,5 @@ fake_bar = {
     "in_opening_range": False
 }
 
+
 strict_process(fake_bar)

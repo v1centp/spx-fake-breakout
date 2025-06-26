@@ -46,10 +46,10 @@ def process(candle):
     high_15, low_15 = range_data["high"], range_data["low"]
 
     # 📰 Récupère les news pertinentes
-    news_docs = db.collection("polygon_news") \
+    news_docs = db.collection("all_news") \
         .where("impact_score", ">=", 0.6) \
         .where("type", "in", ["macro", "breaking"]) \
-        .where("published_utc", ">=", f"{today}T00:00:00Z") \
+        .where("fetched_at", ">=", f"{today}T00:00:00Z") \
         .stream()
     news_summary = "\n".join([n.to_dict().get("summary", "") for n in news_docs])
 
@@ -60,13 +60,12 @@ def process(candle):
         f"Dernière bougie : o={candle['o']}, h={candle['h']}, l={candle['l']}, c={candle['c']}\n"
         f"News importantes du jour :\n{safe_news}\n\n"
         "Analyse les données et dis-moi si je dois entrer un trade maintenant.\n"
-        "Réponds uniquement avec un JSON (aucun texte en dehors du JSON) de cette forme :\n"
+        "Réponds uniquement avec un JSON de cette forme :\n"
         '{\n'
+        '  "prendre_position": true ou false,\n'
         '  "direction": "long" ou "short",\n'
-        '  "justification": "ta justification détaillée",\n'
-        '  "confidence": nombre entre 0.1 et 1.0\n'
-        '}\n'
-        "Si tu veux expliquer ta décision, mets tout dans le champ 'justification'."
+        '  "justification": "ta justification détaillée"\n'
+        '}'
     )
 
     print("📄 Prompt généré :", prompt)
@@ -91,11 +90,26 @@ def process(candle):
             return
 
         decision = json.loads(json_match.group())
-        if decision.get("confidence", 0) < 0.6:
-            print("🟡 Confiance trop faible, pas de trade.")
+        if not decision.get("prendre_position", False):
+            print("🟡 GPT ne recommande pas de prise de position.")
+            log_to_firestore(f"🟡 [{STRATEGY_KEY}] Pas de position recommandée", level="TRADING")
             return
 
         direction = decision["direction"].upper()
+
+        # 🚫 Limite de 5 trades par jour
+        trades_today = list(db.collection("trading_days").document(today).collection("trades").stream())
+        if len(trades_today) >= 5:
+            log_to_firestore(f"🚫 [{STRATEGY_KEY}] 5 trades déjà exécutés aujourd'hui", level="TRADING")
+            return
+
+        # 🔁 Empêche de reprendre un trade identique
+        for t in trades_today:
+            t_data = t.to_dict()
+            if t_data.get("direction") == direction:
+                log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade {direction} déjà pris aujourd'hui", level="TRADING")
+                return
+
         entry = get_entry_price()
         sl_ref = candle["l"] if direction == "LONG" else candle["h"]
         sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref, direction)
@@ -112,12 +126,6 @@ def process(candle):
             log_to_firestore(f"❌ [{STRATEGY_KEY}] Position trop petite ({units})", level="ERROR")
             return
 
-        # 📆 Vérifie si déjà exécutée
-        trade_doc = db.collection("trading_days").document(today).collection("trades").document(STRATEGY_KEY).get()
-        if trade_doc.exists:
-            log_to_firestore(f"🔁 [{STRATEGY_KEY}] Déjà exécuté aujourd'hui", level="TRADING")
-            return
-
         executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
         log_to_firestore(f"✅ [{STRATEGY_KEY}] Trade {direction} exécuté : {executed_units} unités", level="TRADING")
 
@@ -130,7 +138,7 @@ def process(candle):
             "timestamp": datetime.now().isoformat(),
             "meta": {
                 "justification": decision.get("justification"),
-                "confidence": decision.get("confidence")
+                "prendre_position": True
             }
         })
 
