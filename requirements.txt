@@ -7,3 +7,4 @@ polygon-api-client
 pytz
 requests
 openai
+beautifulsoup4
