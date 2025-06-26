@@ -21,7 +21,10 @@ STRATEGY_KEY = "gpt_trader"
 RISK_CHF = 50
 
 def get_candle_history(db, day):
-    candles = db.collection("ohlc_1m").where("day", "==", day).order_by("utc_time").stream()
+    candles = db.collection("ohlc_1m") \
+        .where("day", "==", day) \
+        .order_by("utc_time") \
+        .stream()
     return [
         {"t": c.to_dict()["utc_time"], "o": c.to_dict()["o"], "h": c.to_dict()["h"],
          "l": c.to_dict()["l"], "c": c.to_dict()["c"]}
@@ -104,19 +107,16 @@ def process(candle):
 
         direction = decision["direction"].upper()
 
-        trades_today = list(db.collection("trading_days").document(today).collection("trades").stream())
-        if len(trades_today) >= 5:
+        # 🚫 Vérifie si 5 trades déjà exécutés pour cette stratégie
+        trades_today = db.collection("trading_days").document(today).collection("trades") \
+            .where("strategy", "==", STRATEGY_KEY).stream()
+        trades_list = list(trades_today)
+        if len(trades_list) >= 5:
             log_to_firestore(f"🚫 [{STRATEGY_KEY}] 5 trades déjà exécutés aujourd'hui", level="TRADING")
             return
 
-        for t in trades_today:
-            t_data = t.to_dict()
-            if t_data.get("direction") == direction:
-                log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade {direction} déjà pris aujourd'hui", level="TRADING")
-                return
-
         entry = get_entry_price()
-        sl_ref = candle["l"]-5 if direction == "LONG" else candle["h"]+5
+        sl_ref = candle["l"] - 5 if direction == "LONG" else candle["h"] + 5
         sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref, direction)
 
         if risk_per_unit == 0:
@@ -124,8 +124,8 @@ def process(candle):
             return
 
         units = compute_position_size(risk_per_unit, RISK_CHF)
-        print(f"📊 Calculs - Entry: {entry}, SL: {sl_price}, TP: {tp_price}, Risk/unit: {risk_per_unit}, Units: {units}")
-        log_to_firestore(f"[DEBUG] Entry={entry}, SL={sl_price}, TP={tp_price}, Risk/Unit={risk_per_unit}, Units={units}", level="INFO")
+        print(f"📊 Entry: {entry}, SL: {sl_price}, TP: {tp_price}, Units: {units}")
+        log_to_firestore(f"[DEBUG] Entry={entry}, SL={sl_price}, TP={tp_price}, Units={units}", level="INFO")
 
         if units < 0.1:
             log_to_firestore(f"❌ [{STRATEGY_KEY}] Position trop petite ({units})", level="ERROR")
@@ -134,13 +134,14 @@ def process(candle):
         executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
         log_to_firestore(f"✅ [{STRATEGY_KEY}] Trade {direction} exécuté : {executed_units} unités", level="TRADING")
 
-        db.collection("trading_days").document(today).collection("trades").document(STRATEGY_KEY).set({
+        db.collection("trading_days").document(today).collection("trades").add({
+            "strategy": STRATEGY_KEY,
             "entry": entry,
             "sl": sl_price,
             "tp": tp_price,
             "direction": direction,
             "units": executed_units,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "meta": {
                 "justification": decision.get("justification"),
                 "prendre_position": True
