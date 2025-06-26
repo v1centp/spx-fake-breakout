@@ -111,7 +111,7 @@ def process(candle):
                 return
 
         entry = get_entry_price()
-        sl_ref = candle["l"] if direction == "LONG" else candle["h"]
+        sl_ref = candle["l"]-5 if direction == "LONG" else candle["h"]+5
         sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref, direction)
 
         if risk_per_unit == 0:
