@@ -84,6 +84,7 @@ def process(candle):
         '  "tp_ref": float\n'
         '}'
     )
+    print(f"Prompt envoyé à GPT : {prompt.strip()}")  # Debugging line
 
     try:
         # 🧠 Appel GPT
