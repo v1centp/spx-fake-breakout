@@ -62,13 +62,17 @@ def process(candle):
 
     # 📈 Historique complet depuis 09:30 NY
     history = get_candle_history(db, today)
-    history_text = "\n".join([f"{c['t']} - o:{c['o']} h:{c['h']} l:{c['l']} c:{c['c']}" for c in history])
+    history_text = "\n".join([
+    f"{c['t']} - o:{c['o']:.2f} h:{c['h']:.2f} l:{c['l']:.2f} c:{c['c']:.2f}"
+    for c in history
+])
+
 
     # 🧠 Construction prompt GPT
     prompt = (
         f"Bougies du jour (UTC) depuis 09:30 NY jusqu'à maintenant :\n{history_text}\n\n"
-        f"Range d'ouverture (09:30–09:45 NY) : High = {high_15}, Low = {low_15}\n"
-        f"Dernière bougie : o={candle['o']}, h={candle['h']}, l={candle['l']}, c={candle['c']}\n\n"
+        f"Range d'ouverture (09:30–09:45 NY) : High = {high_15:.2f}, Low = {low_15:.2f}\n"
+        f"Dernière bougie : o={candle['o']:.2f}, h={candle['h']:.2f}, l={candle['l']:.2f}, c={candle['c']:.2f}\n\n"
         f"News importantes du jour :\n{safe_news}\n\n"
         "Ta mission : détecter une opportunité de trade intraday (breakout, fake breakout, range reversion, etc.).\n"
         "Conditions à respecter :\n"
@@ -84,9 +88,9 @@ def process(candle):
         '  "tp_ref": float\n'
         '}'
     )
-    print(f"Prompt envoyé à GPT : {prompt.strip()}")  # Debugging line
 
     try:
+        print(f"Prompt envoyé à GPT : {prompt.strip()}")  # Debugging line
         # 🧠 Appel GPT
         response = client.chat.completions.create(
             model="gpt-4",
