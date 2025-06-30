@@ -28,7 +28,11 @@ def fetch_and_store_rss():
         if doc.get().exists:
             continue
 
-        summary = entry.summary
+        # Récupère le résumé si disponible, sinon chaîne vide
+        summary = getattr(entry, "summary", "").strip()
+        if not summary:
+            print(f"⚠️ Pas de résumé pour: {title[:60]} — ignoré")
+            continue  # ou tu peux décider de traiter quand même
 
         try:
             completion = client.chat.completions.create(
@@ -58,6 +62,7 @@ def fetch_and_store_rss():
             print(f"✅ Saved: {title[:60]}...")
         except Exception as e:
             print(f"❌ Error processing: {title[:60]} — {e}")
+
 
 if __name__ == "__main__":
     fetch_and_store_rss()

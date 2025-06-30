@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 # Charge les variables d'environnement du fichier .env
 load_dotenv()
 
-from app.strategies.gpt_trader import process as gpt_process
+from server.app.strategies.gpt_trader_old import process as gpt_process
 
 fake_bar = {
     "ev": "AM",

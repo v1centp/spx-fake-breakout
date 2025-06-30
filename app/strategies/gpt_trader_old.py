@@ -17,11 +17,9 @@ from app.services.shared_strategy_tools import (
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-STRATEGY_KEY = "gpt_trader"
-RISK_CHF = 200
+STRATEGY_KEY = "gpt_trader_old"
+RISK_CHF = 0
 MIN_DELAY_MINUTES = 5  # délai minimum entre deux trades
-SENTIMENT_THRESHOLD_LONG = 70
-SENTIMENT_THRESHOLD_SHORT = 30
 
 def get_candle_history(db, day):
     candles = db.collection("ohlc_1m").where("day", "==", day).order_by("utc_time").stream()
@@ -53,18 +51,29 @@ def process(candle):
     range_data = range_doc.to_dict()
     high_15, low_15 = range_data["high"], range_data["low"]
 
+    # 📰 News du jour
+    news_docs = db.collection("all_news") \
+        .where("impact_score", ">=", 0.6) \
+        .where("type", "in", ["macro", "breaking"]) \
+        .where("fetched_at", ">=", f"{today}T00:00:00Z") \
+        .stream()
+    news_summary = "\n".join([n.to_dict().get("summary", "") for n in news_docs])
+    safe_news = html.escape(news_summary).replace('"', "'")
+
     # 📈 Historique complet depuis 09:30 NY
     history = get_candle_history(db, today)
     history_text = "\n".join([
-        f"{c['t']} - o:{c['o']:.2f} h:{c['h']:.2f} l:{c['l']:.2f} c:{c['c']:.2f}"
-        for c in history
-    ])
+    f"{c['t']} - o:{c['o']:.2f} h:{c['h']:.2f} l:{c['l']:.2f} c:{c['c']:.2f}"
+    for c in history
+])
 
-    # 🧠 Construction prompt GPT (sans les news)
+
+    # 🧠 Construction prompt GPT
     prompt = (
         f"Bougies du jour (UTC) depuis 09:30 NY jusqu'à maintenant :\n{history_text}\n\n"
         f"Range d'ouverture (09:30–09:45 NY) : High = {high_15:.2f}, Low = {low_15:.2f}\n"
         f"Dernière bougie : o={candle['o']:.2f}, h={candle['h']:.2f}, l={candle['l']:.2f}, c={candle['c']:.2f}\n\n"
+        f"News importantes du jour :\n{safe_news}\n\n"
         "Ta mission : détecter une opportunité de trade intraday (breakout, fake breakout, range reversion, etc.).\n"
         "Conditions à respecter :\n"
         "- Le TP doit être au moins 2x plus éloigné que le SL (ratio TP/SL ≥ 2)\n"
@@ -81,10 +90,12 @@ def process(candle):
     )
 
     try:
+        print(f"Prompt envoyé à GPT : {prompt.strip()}")  # Debugging line
+        # 🧠 Appel GPT
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Tu analyses les bougies intraday SPX pour détecter une opportunité de trade."},
+                {"role": "system", "content": "Tu analyses bougies et news pour détecter des opportunités de trade intraday SPX."},
                 {"role": "user", "content": prompt.strip()}
             ],
             temperature=0.3
@@ -106,33 +117,27 @@ def process(candle):
         tp_ref = float(decision["tp_ref"])
         justification = decision.get("justification", "")
 
-        # 🔎 Vérifie la note des news fondamentales APRÈS décision GPT
-        score_docs = db.collection("news_sentiment_score").order_by("timestamp", direction="DESCENDING").limit(1).stream()
-        score_doc = next(score_docs, None)
-        if score_doc:
-            note = score_doc.to_dict().get("note", 50)
-            if (direction == "LONG" and note < SENTIMENT_THRESHOLD_LONG) or (direction == "SHORT" and note > SENTIMENT_THRESHOLD_SHORT):
-                log_to_firestore(f"🧠 [{STRATEGY_KEY}] Signal {direction} bloqué par score news ({note})", level="NO_TRADING")
-                return
-
         entry = get_entry_price()
         spread_factor = entry / candle["c"]
 
         sl_price = sl_ref * spread_factor
         tp_price = tp_ref * spread_factor
 
+        # 🔁 Ratio vérification
         sl_dist = abs(entry - sl_price)
         tp_dist = abs(tp_price - entry)
         if tp_dist < 2 * sl_dist:
             log_to_firestore(f"[{STRATEGY_KEY}] Ratio TP/SL insuffisant", level="ERROR")
             return
 
+        # 📐 Position sizing
         risk_per_unit = abs(entry - sl_price)
         units = compute_position_size(risk_per_unit, RISK_CHF)
         if units < 0.1:
             log_to_firestore(f"[{STRATEGY_KEY}] Position trop petite ({units})", level="ERROR")
             return
 
+        # 🔁 Anti-replication (temps + direction)
         trades_ref = db.collection("trading_days").document(today).collection("trades").document(STRATEGY_KEY).collection("executions")
         trades = list(trades_ref.stream())
         if trades:
@@ -143,9 +148,10 @@ def process(candle):
                 log_to_firestore(f"[{STRATEGY_KEY}] Trade trop récent", level="INFO")
                 return
             if last.get("direction") == direction:
-                log_to_firestore(f"[{STRATEGY_KEY}] Même direction que précédent, ignoré", level="NO_TRADING")
+                log_to_firestore(f"[{STRATEGY_KEY}] Même direction que le trade précédent, ignoré", level="NO_TRADING")
                 return
 
+        # ✅ Exécution
         executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
         log_to_firestore(f"[{STRATEGY_KEY}] Trade {direction} exécuté ({executed_units} unités)", level="TRADING")
 
