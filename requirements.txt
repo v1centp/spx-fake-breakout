@@ -10,3 +10,4 @@ openai
 beautifulsoup4
 html5lib
 feedparser
+tiktoken

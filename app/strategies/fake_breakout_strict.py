@@ -36,6 +36,7 @@ def process(candle):
     direction = None
     breakout = None
     close = candle["c"]
+    msg = None  # ✅ Initialisation sûre
 
     if candle["h"] > high_15:
         breakout = candle["h"] - high_15
@@ -47,7 +48,6 @@ def process(candle):
             msg = f"🔍 [{STRATEGY_KEY}] Open hors range"
         else:
             direction = "SHORT"
-            msg = None
 
     elif candle["l"] < low_15:
         breakout = low_15 - candle["l"]
@@ -59,7 +59,9 @@ def process(candle):
             msg = f"🔍 [{STRATEGY_KEY}] Open hors range"
         else:
             direction = "LONG"
-            msg = None
+
+    else:
+        msg = f"🔍 [{STRATEGY_KEY}] Bougie dans le range, aucun breakout"
 
     if not direction:
         log_to_firestore(msg or f"🔍 [{STRATEGY_KEY}] Aucun breakout valide.", level="NO_TRADING")

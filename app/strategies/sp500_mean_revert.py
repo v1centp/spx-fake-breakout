@@ -77,7 +77,7 @@ def process(candle):
         return
 
     # 📏 SL/TP
-    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref_oanda, direction, tp_ratio=1.75)
+    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref_oanda, direction)
     if risk_per_unit == 0:
         log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul.", level="ERROR")
         return

@@ -19,13 +19,14 @@ def compute_position_size(entry, sl):
     return round(RISK_CHF / risk_per_unit, 1)
 
 
+# ... imports identiques ...
+
 def process(candle):
     db = get_firestore()
     today = candle["day"]
 
     utc_dt = datetime.strptime(candle["utc_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     ny_time = utc_dt.astimezone(pytz.timezone("America/New_York")).time()
-
     if ny_time < datetime.strptime("09:45", "%H:%M").time() or ny_time > datetime.strptime("11:30", "%H:%M").time():
         return
 
@@ -45,7 +46,6 @@ def process(candle):
     direction = None
     breakout = 0
 
-    # Check confirmation de breakout enregistré
     temp_doc_ref = db.collection("temp_signals").document(today)
     temp_signal = temp_doc_ref.get()
 
@@ -54,7 +54,6 @@ def process(candle):
         breakout_level = high_15 if signal["direction"] == "SHORT" else low_15
         retouch_range = 0.25 * range_size
 
-        # Mesure d'un vrai retouch (contact du niveau clé)
         contact = (
             abs(candle["l"] - breakout_level) <= retouch_range if signal["direction"] == "LONG"
             else abs(candle["h"] - breakout_level) <= retouch_range
@@ -63,8 +62,10 @@ def process(candle):
         if contact:
             direction = signal["direction"]
             breakout = abs(signal["breakout"])
+            log_to_firestore(f"[{STRATEGY_KEY}] 🟢 Pullback confirmé sur {direction} après breakout de {breakout:.2f}", level="TRADING")
             temp_doc_ref.delete()
         else:
+            log_to_firestore(f"[{STRATEGY_KEY}] 🔁 Pullback échoué sur {signal['direction']}, aucun contact valide → signal supprimé", level="NO_TRADING")
             temp_doc_ref.delete()
             return
 
@@ -72,26 +73,33 @@ def process(candle):
         if candle["h"] > high_15:
             breakout = candle["h"] - high_15
             if breakout >= 0.15 * range_size:
+                log_to_firestore(f"[{STRATEGY_KEY}] 🚨 Breakout haussier détecté ({breakout:.2f}) → en attente pullback SHORT", level="TRADING")
                 temp_doc_ref.set({
                     "direction": "SHORT",
                     "breakout": breakout,
                     "detected_at": candle["utc_time"]
                 })
+            else:
+                log_to_firestore(f"[{STRATEGY_KEY}] ❌ Breakout haussier insuffisant ({breakout:.2f})", level="NO_TRADING")
             return
 
         elif candle["l"] < low_15:
             breakout = low_15 - candle["l"]
             if breakout >= 0.15 * range_size:
+                log_to_firestore(f"[{STRATEGY_KEY}] 🚨 Breakout baissier détecté ({breakout:.2f}) → en attente pullback LONG", level="TRADING")
                 temp_doc_ref.set({
                     "direction": "LONG",
                     "breakout": breakout,
                     "detected_at": candle["utc_time"]
                 })
+            else:
+                log_to_firestore(f"[{STRATEGY_KEY}] ❌ Breakout baissier insuffisant ({breakout:.2f})", level="NO_TRADING")
             return
         else:
+            log_to_firestore(f"[{STRATEGY_KEY}] 🔍 Bougie sans breakout détecté", level="NO_TRADING")
             return
 
-    # 🔎 Vérifie la note des news fondamentales
+    # News sentiment
     score_docs = db.collection("news_sentiment_score").order_by("timestamp", direction="DESCENDING").limit(1).stream()
     score_doc = next(score_docs, None)
     if score_doc:
@@ -100,7 +108,7 @@ def process(candle):
             log_to_firestore(f"🧠 [{STRATEGY_KEY}] Signal {direction} bloqué à cause du score news ({note})", level="NO_TRADING")
             return
 
-    # Vérifie s'il y a déjà un trade dans la même direction qui n'était pas perdant
+    # Trade déjà pris aujourd’hui ?
     trades_same_dir = list(db.collection("trading_days")
         .document(today)
         .collection("trades")
@@ -114,7 +122,7 @@ def process(candle):
             log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade {direction} déjà pris avec outcome {outcome}", level="TRADING")
             return
 
-    log_to_firestore(f"[{STRATEGY_KEY}] ✅ Signal confirmé {direction} après breakout de {breakout:.2f}", level="TRADING")
+    log_to_firestore(f"[{STRATEGY_KEY}] ✅ Signal validé : entrée {direction} après confirmation pullback", level="TRADING")
 
     try:
         entry = get_entry_price()
@@ -142,7 +150,7 @@ def process(candle):
 
     try:
         executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
-        log_to_firestore(f"✅ [{STRATEGY_KEY}] Ordre {direction} exécuté ({executed_units})", level="TRADING")
+        log_to_firestore(f"✅ [{STRATEGY_KEY}] Ordre {direction} exécuté ({executed_units} unités)", level="TRADING")
     except Exception as e:
         log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur exécution : {e}", level="ERROR")
         return
@@ -155,7 +163,6 @@ def process(candle):
         "direction": direction,
         "units": executed_units,
         "timestamp": datetime.now().isoformat(),
-        
     })
 
     log_to_firestore(f"🚀 [{STRATEGY_KEY}] Trade confirmé exécuté à {entry} (SL: {sl_price}, TP: {tp_price})", level="TRADING")

@@ -9,4 +9,5 @@ from .gpt_trader_old import process as gpt_strategy_old
 
 
 def get_all_strategies():
-    return [soft_strategy, strict_strategy, gpt_strategy, sp500_mean_revert_strategy, spx_breakout_pullback_filtered, spx_fakebreakout_pro, gpt_strategy_old]
+    return [soft_strategy, strict_strategy, sp500_mean_revert_strategy, spx_breakout_pullback_filtered, 
+            spx_fakebreakout_pro, gpt_strategy, gpt_strategy_old]

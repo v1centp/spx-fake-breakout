@@ -9,13 +9,11 @@ from app.services.shared_strategy_tools import (
 STRATEGY_KEY = "spx_fakebreakout_pro"
 RISK_CHF = 200
 
-
 def compute_position_size(entry, sl):
     risk_per_unit = abs(entry - sl)
     if risk_per_unit == 0:
         return 0
     return round(RISK_CHF / risk_per_unit, 1)
-
 
 def process(candle):
     db = get_firestore()
@@ -25,14 +23,17 @@ def process(candle):
     ny_time = utc_dt.astimezone(pytz.timezone("America/New_York")).time()
 
     if ny_time < datetime.strptime("09:45", "%H:%M").time() or ny_time > datetime.strptime("11:30", "%H:%M").time():
+        log_to_firestore(f"🕒 [{STRATEGY_KEY}] Bougie hors plage horaire", level="NO_TRADING")
         return
 
     config = db.collection("config").document("strategies").get().to_dict()
     if not config.get(STRATEGY_KEY, False):
+        log_to_firestore(f"⚙️ [{STRATEGY_KEY}] Stratégie désactivée", level="NO_TRADING")
         return
 
     range_data = db.collection("opening_range").document(today).get().to_dict()
     if not range_data or range_data.get("status") != "ready":
+        log_to_firestore(f"📊 [{STRATEGY_KEY}] Range d'ouverture non prêt", level="NO_TRADING")
         return
 
     high_15 = range_data["high"]
@@ -43,29 +44,38 @@ def process(candle):
     direction = None
     breakout = 0
 
-    # Detection d'un faux breakout : dépassement + retour dans le range
+    # ✅ Détection fake breakout
     if candle["h"] > high_15 and low_15 <= close <= high_15:
         excess = candle["h"] - high_15
         if excess >= 0.15 * range_size:
             direction = "SHORT"
             breakout = excess
+            log_to_firestore(f"🎯 [{STRATEGY_KEY}] Excès haussier détecté ({excess:.2f}) → retour dans le range", level="TRADING")
+        else:
+            log_to_firestore(f"❌ [{STRATEGY_KEY}] Excès haussier insuffisant ({excess:.2f})", level="NO_TRADING")
 
     elif candle["l"] < low_15 and low_15 <= close <= high_15:
         excess = low_15 - candle["l"]
         if excess >= 0.15 * range_size:
             direction = "LONG"
             breakout = excess
+            log_to_firestore(f"🎯 [{STRATEGY_KEY}] Excès baissier détecté ({excess:.2f}) → retour dans le range", level="TRADING")
+        else:
+            log_to_firestore(f"❌ [{STRATEGY_KEY}] Excès baissier insuffisant ({excess:.2f})", level="NO_TRADING")
+    
+    else:
+        log_to_firestore(f"🔍 [{STRATEGY_KEY}] Aucun fake breakout détecté sur cette bougie", level="NO_TRADING")
 
     if not direction:
         return
 
-    # 🔎 Vérifie la note des news fondamentales
+    # 🔎 Vérifie le score des news fondamentales
     score_docs = db.collection("news_sentiment_score").order_by("timestamp", direction="DESCENDING").limit(1).stream()
     score_doc = next(score_docs, None)
     if score_doc:
         note = score_doc.to_dict().get("note", 50)
         if (direction == "LONG" and note < 30) or (direction == "SHORT" and note > 70):
-            log_to_firestore(f"🧠 [{STRATEGY_KEY}] Signal {direction} bloqué à cause du score news ({note})", level="NO_TRADING")
+            log_to_firestore(f"🧠 [{STRATEGY_KEY}] Signal {direction} bloqué par le score news ({note})", level="NO_TRADING")
             return
 
     trades_same_dir = list(db.collection("trading_days")
@@ -76,16 +86,14 @@ def process(candle):
         .stream())
 
     if trades_same_dir:
-        log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade {direction} déjà exécuté aujourd'hui.", level="NO_TRADING")
+        log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade {direction} déjà exécuté aujourd'hui", level="NO_TRADING")
         return
-
-    log_to_firestore(f"🎯 [{STRATEGY_KEY}] Signal fake breakout détecté {direction} après excès de {breakout:.2f}", level="TRADING")
 
     try:
         entry = get_entry_price()
-        log_to_firestore(f"💵 [{STRATEGY_KEY}] Prix OANDA : {entry}", level="OANDA")
+        log_to_firestore(f"💵 [{STRATEGY_KEY}] Prix OANDA reçu : {entry}", level="OANDA")
     except Exception as e:
-        log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur prix OANDA : {e}", level="ERROR")
+        log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur récupération prix OANDA : {e}", level="ERROR")
         return
 
     buffer = max(0.3, 0.015 * range_size)
@@ -96,17 +104,17 @@ def process(candle):
 
     sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref_oanda, direction)
     if risk_per_unit == 0:
-        log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul.", level="ERROR")
+        log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul détecté", level="ERROR")
         return
 
     units = compute_position_size(entry, sl_price)
     if units < 0.1:
-        log_to_firestore(f"❌ [{STRATEGY_KEY}] Taille position trop faible ({units})", level="ERROR")
+        log_to_firestore(f"❌ [{STRATEGY_KEY}] Taille de position trop faible ({units})", level="ERROR")
         return
 
     try:
         executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
-        log_to_firestore(f"✅ [{STRATEGY_KEY}] Ordre {direction} exécuté ({executed_units})", level="TRADING")
+        log_to_firestore(f"✅ [{STRATEGY_KEY}] Trade {direction} exécuté ({executed_units} unités)", level="TRADING")
     except Exception as e:
         log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur exécution : {e}", level="ERROR")
         return

@@ -1,4 +1,6 @@
 from app.strategies.fake_breakout_strict import process as strict_process
+from app.strategies import get_all_strategies
+
 
 fake_bar = {
     "ev": "AM",
@@ -15,5 +17,11 @@ fake_bar = {
     "in_opening_range": False
 }
 
+for strategy_fn in get_all_strategies():
+                    try:
+                        strategy_fn(fake_bar)
+                    except Exception as e:
+                        print(f"❌ Erreur stratégie {strategy_fn.__name__} : {e}")
+                        
+                    
 
-strict_process(fake_bar)
