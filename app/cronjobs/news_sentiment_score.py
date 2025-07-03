@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime, timezone, timedelta
+import pytz
 from openai import OpenAI
 from app.services.firebase import get_firestore
 
@@ -29,6 +30,12 @@ def fetch_news_summaries():
     return [f"Titre: {n['title']}\nRésumé: {n.get('summary', '')}" for n in news if 'title' in n]
 
 def update_sentiment_score():
+    # Vérifie si on est entre 09:00 et 12:00 NY
+    ny_time = datetime.now(pytz.utc).astimezone(pytz.timezone("America/New_York")).time()
+    if not (datetime.strptime("09:00", "%H:%M").time() <= ny_time <= datetime.strptime("12:00", "%H:%M").time()):
+        print(f"⏱️ Hors plage horaire NY (actuel : {ny_time}) → skipping")
+        return
+
     summaries = fetch_news_summaries()
     if not summaries:
         print("⛔ Aucune news à analyser.")

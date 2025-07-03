@@ -3,7 +3,7 @@ import pytz
 from app.services.firebase import get_firestore
 from app.services.log_service import log_to_firestore
 from app.services.shared_strategy_tools import (
-    get_entry_price, calculate_sl_tp, execute_trade
+    get_entry_price, calculate_sl_tp, compute_position_size, execute_trade
 )
 
 STRATEGY_KEY = "spx_fakebreakout_pro"
@@ -43,6 +43,7 @@ def process(candle):
     close = candle["c"]
     direction = None
     breakout = 0
+    candle_id = f"SPX_{candle['e']}"
 
     # ✅ Détection fake breakout
     if candle["h"] > high_15 and low_15 <= close <= high_15:
@@ -62,12 +63,14 @@ def process(candle):
             log_to_firestore(f"🎯 [{STRATEGY_KEY}] Excès baissier détecté ({excess:.2f}) → retour dans le range", level="TRADING")
         else:
             log_to_firestore(f"❌ [{STRATEGY_KEY}] Excès baissier insuffisant ({excess:.2f})", level="NO_TRADING")
-    
     else:
         log_to_firestore(f"🔍 [{STRATEGY_KEY}] Aucun fake breakout détecté sur cette bougie", level="NO_TRADING")
 
     if not direction:
+        db.collection("ohlc_1m").document(candle_id).update({f"strategy_decisions.{STRATEGY_KEY}": "REJECT: aucun signal"})
         return
+
+    db.collection("ohlc_1m").document(candle_id).update({f"strategy_decisions.{STRATEGY_KEY}": f"ACCEPT: signal {direction}"})
 
     # 🔎 Vérifie le score des news fondamentales
     score_docs = db.collection("news_sentiment_score").order_by("timestamp", direction="DESCENDING").limit(1).stream()
@@ -75,7 +78,7 @@ def process(candle):
     if score_doc:
         note = score_doc.to_dict().get("note", 50)
         if (direction == "LONG" and note < 30) or (direction == "SHORT" and note > 70):
-            log_to_firestore(f"🧠 [{STRATEGY_KEY}] Signal {direction} bloqué par le score news ({note})", level="NO_TRADING")
+            log_to_firestore(f"🧐 [{STRATEGY_KEY}] Signal {direction} bloqué par le score news ({note})", level="NO_TRADING")
             return
 
     trades_same_dir = list(db.collection("trading_days")
@@ -126,7 +129,9 @@ def process(candle):
         "tp": tp_price,
         "direction": direction,
         "units": executed_units,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "source_candle_id": candle_id,
+        "outcome": "unknown"
     })
 
     log_to_firestore(f"🚀 [{STRATEGY_KEY}] Fake breakout exécuté à {entry} (SL: {sl_price}, TP: {tp_price})", level="TRADING")

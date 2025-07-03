@@ -33,6 +33,7 @@ def process(candle):
     low_15 = range_data["low"]
     o = candle["o"]
     c = candle["c"]
+    candle_id = f"SPX_{candle['e']}"
 
     direction = None
     sl_ref_polygon = None
@@ -44,8 +45,11 @@ def process(candle):
         direction = "LONG"
         sl_ref_polygon = min(entry.to_dict()["l"] for entry in db.collection("ohlc_1m").where("day", "==", today).stream())
     else:
+        db.collection("ohlc_1m").document(candle_id).update({f"strategy_decisions.{STRATEGY_KEY}": "REJECT: conditions non remplies"})
         log_to_firestore(f"❌ [{STRATEGY_KEY}] Conditions non remplies (open hors range, close dans range)", level="NO_TRADING")
         return
+
+    db.collection("ohlc_1m").document(candle_id).update({f"strategy_decisions.{STRATEGY_KEY}": f"ACCEPT: signal {direction}"})
 
     # 🔁 Vérifie trade dans même direction déjà pris
     trades_same_dir = list(db.collection("trading_days")
@@ -68,7 +72,7 @@ def process(candle):
         log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur prix OANDA : {e}", level="ERROR")
         return
 
-    # 🧮 Ajustement SL avec spread factor
+    # 🧲 Ajustement SL avec spread factor
     try:
         spread_factor = entry / candle["c"]
         sl_ref_oanda = sl_ref_polygon * spread_factor
@@ -82,7 +86,7 @@ def process(candle):
         log_to_firestore(f"❌ [{STRATEGY_KEY}] Risque nul.", level="ERROR")
         return
 
-    # 📐 Position
+    # 🖐️ Position
     units = compute_position_size(risk_per_unit, RISK_CHF)
     if units < 0.1:
         log_to_firestore(f"❌ [{STRATEGY_KEY}] Taille position trop faible ({units})", level="ERROR")
@@ -102,7 +106,9 @@ def process(candle):
         "tp": tp_price,
         "direction": direction,
         "units": executed_units,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "source_candle_id": candle_id,
+        "outcome": "unknown"
     })
 
     log_to_firestore(f"🚀 [{STRATEGY_KEY}] Trade exécuté à {entry} (SL: {sl_price}, TP: {tp_price})", level="TRADING")

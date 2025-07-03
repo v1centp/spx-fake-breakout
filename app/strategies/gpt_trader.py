@@ -30,13 +30,10 @@ def get_candle_history(db, day):
         for c in candles
     ]
 
-# ... imports inchangés ...
-
 def process(candle):
     db = get_firestore()
     today = candle["day"]
 
-    # Heure NY
     utc_dt = datetime.strptime(candle["utc_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     ny_time = utc_dt.astimezone(pytz.timezone("America/New_York")).time()
     if ny_time < datetime.strptime("09:45", "%H:%M").time() or ny_time > datetime.strptime("11:30", "%H:%M").time():
@@ -46,14 +43,12 @@ def process(candle):
     if not config.get(STRATEGY_KEY, False):
         return
 
-    # 📊 Range d'ouverture
     range_doc = db.collection("opening_range").document(today).get()
     if not range_doc.exists:
         return
     range_data = range_doc.to_dict()
     high_15, low_15 = range_data["high"], range_data["low"]
 
-    # 📰 Vérifie score news (seulement si > 60 ou < 40)
     score_docs = db.collection("news_sentiment_score").order_by("timestamp", direction="DESCENDING").limit(1).stream()
     score_doc = next(score_docs, None)
     if not score_doc:
@@ -65,7 +60,6 @@ def process(candle):
         log_to_firestore(f"[{STRATEGY_KEY}] Marché sans tendance claire (score news = {note}) → pas de traitement", level="NO_TRADING")
         return
 
-    # 📈 Récupère jusqu’à 90 dernières bougies
     all_candles = get_candle_history(db, today)
     last_candles = all_candles[-90:]
     history_text = "\n".join([
@@ -111,6 +105,9 @@ def process(candle):
             return
 
         decision = json.loads(json_match.group())
+        candle_id = f"SPX_{candle['e']}"
+        db.collection("ohlc_1m").document(candle_id).update({f"strategy_decisions.{STRATEGY_KEY}": decision})
+
         if not decision.get("prendre_position"):
             log_to_firestore(f"[{STRATEGY_KEY}] Aucune prise de position suggérée", level="NO_TRADING")
             return
@@ -166,9 +163,10 @@ def process(candle):
                 "prendre_position": True,
                 "sl_ref": sl_ref,
                 "tp_ref": tp_ref
-            }
+            },
+            "source_candle_id": candle_id,
+            "outcome": "unknown"
         })
 
     except Exception as e:
         log_to_firestore(f"[{STRATEGY_KEY}] Erreur GPT ou exécution : {e}", level="ERROR")
-

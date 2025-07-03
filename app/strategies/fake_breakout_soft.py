@@ -34,38 +34,46 @@ def process(candle):
     low_15 = range_data["low"]
     range_size = range_data["range_size"]
 
-    # ❌ Open dans le range → ignorer (soft)
-    if low_15 <= candle["o"] <= high_15:
-        log_to_firestore(f"🚫 [{STRATEGY_KEY}] Open dans le range → strat soft ignorée", level="NO_TRADING")
-        return
-
+    decision_msg = ""
     direction, breakout = None, None
     message = None
     close = candle["c"]
 
-    if candle["h"] > high_15:
+    if low_15 <= candle["o"] <= high_15:
+        decision_msg = "Open dans le range → strat soft ignorée"
+        log_to_firestore(f"🚫 [{STRATEGY_KEY}] {decision_msg}", level="NO_TRADING")
+    elif candle["h"] > high_15:
         breakout = candle["h"] - high_15
         if breakout < 0.15 * range_size:
-            message = f"🔍 [{STRATEGY_KEY}] Breakout haussier insuffisant ({breakout:.2f})"
+            decision_msg = f"Breakout haussier insuffisant ({breakout:.2f})"
+            log_to_firestore(f"🔍 [{STRATEGY_KEY}] {decision_msg}", level="NO_TRADING")
         elif not (low_15 <= close <= high_15):
-            message = f"🔍 [{STRATEGY_KEY}] Breakout haussier mais close hors range ({close})"
+            decision_msg = f"Breakout haussier mais close hors range ({close})"
+            log_to_firestore(f"🔍 [{STRATEGY_KEY}] {decision_msg}", level="NO_TRADING")
         else:
             direction = "SHORT"
-
+            decision_msg = f"Signal SHORT détecté. Excès: {breakout:.2f}"
     elif candle["l"] < low_15:
         breakout = low_15 - candle["l"]
         if breakout < 0.15 * range_size:
-            message = f"🔍 [{STRATEGY_KEY}] Breakout baissier insuffisant ({breakout:.2f})"
+            decision_msg = f"Breakout baissier insuffisant ({breakout:.2f})"
+            log_to_firestore(f"🔍 [{STRATEGY_KEY}] {decision_msg}", level="NO_TRADING")
         elif not (low_15 <= close <= high_15):
-            message = f"🔍 [{STRATEGY_KEY}] Breakout baissier mais close hors range ({close})"
+            decision_msg = f"Breakout baissier mais close hors range ({close})"
+            log_to_firestore(f"🔍 [{STRATEGY_KEY}] {decision_msg}", level="NO_TRADING")
         else:
             direction = "LONG"
+            decision_msg = f"Signal LONG détecté. Excès: {breakout:.2f}"
+    else:
+        decision_msg = f"Aucun breakout valide."
+        log_to_firestore(f"🔍 [{STRATEGY_KEY}] {decision_msg}", level="NO_TRADING")
+
+    candle_id = f"SPX_{candle['e']}"
+    db.collection("ohlc_1m").document(candle_id).update({f"strategy_decisions.{STRATEGY_KEY}": decision_msg})
 
     if not direction:
-        log_to_firestore(message or f"🔍 [{STRATEGY_KEY}] Aucun breakout valide.", level="NO_TRADING")
         return
 
-    # 🔁 Check trade dans la même direction
     trades_same_dir = list(db.collection("trading_days")
         .document(today)
         .collection("trades")
@@ -77,7 +85,7 @@ def process(candle):
         log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade {direction} déjà exécuté aujourd'hui.", level="TRADING")
         return
 
-    log_to_firestore(f"[{STRATEGY_KEY}] {'📈' if direction == 'LONG' else '📉'} Signal {direction} détecté. Excès: {breakout:.2f}", level="TRADING")
+    log_to_firestore(f"[{STRATEGY_KEY}] {'📈' if direction == 'LONG' else '📉'} {decision_msg}", level="TRADING")
 
     try:
         entry = get_entry_price()
@@ -115,7 +123,9 @@ def process(candle):
         "tp": tp_price,
         "direction": direction,
         "units": executed_units,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "source_candle_id": candle_id,
+        "outcome": "unknown"
     })
 
     log_to_firestore(f"🚀 [{STRATEGY_KEY}] Trade exécuté à {entry} (SL: {sl_price}, TP: {tp_price})", level="TRADING")

@@ -11,15 +11,17 @@ RISK_CHF = 200
 SENTIMENT_THRESHOLD_LONG = 70
 SENTIMENT_THRESHOLD_SHORT = 30
 
-
 def compute_position_size(entry, sl):
     risk_per_unit = abs(entry - sl)
     if risk_per_unit == 0:
         return 0
     return round(RISK_CHF / risk_per_unit, 1)
 
-
-# ... imports identiques ...
+def save_strategy_decision(db, candle, decision: str):
+    doc_id = f"{candle['sym']}_{candle['e']}"
+    db.collection("ohlc_1m").document(doc_id).update({
+        f"strategy_decisions.{STRATEGY_KEY}": decision
+    })
 
 def process(candle):
     db = get_firestore()
@@ -63,9 +65,11 @@ def process(candle):
             direction = signal["direction"]
             breakout = abs(signal["breakout"])
             log_to_firestore(f"[{STRATEGY_KEY}] 🟢 Pullback confirmé sur {direction} après breakout de {breakout:.2f}", level="TRADING")
+            save_strategy_decision(db, candle, f"Signal {direction} confirmé après pullback")
             temp_doc_ref.delete()
         else:
             log_to_firestore(f"[{STRATEGY_KEY}] 🔁 Pullback échoué sur {signal['direction']}, aucun contact valide → signal supprimé", level="NO_TRADING")
+            save_strategy_decision(db, candle, "Pullback échoué")
             temp_doc_ref.delete()
             return
 
@@ -74,6 +78,7 @@ def process(candle):
             breakout = candle["h"] - high_15
             if breakout >= 0.15 * range_size:
                 log_to_firestore(f"[{STRATEGY_KEY}] 🚨 Breakout haussier détecté ({breakout:.2f}) → en attente pullback SHORT", level="TRADING")
+                save_strategy_decision(db, candle, f"Breakout haussier ({breakout:.2f})")
                 temp_doc_ref.set({
                     "direction": "SHORT",
                     "breakout": breakout,
@@ -81,12 +86,14 @@ def process(candle):
                 })
             else:
                 log_to_firestore(f"[{STRATEGY_KEY}] ❌ Breakout haussier insuffisant ({breakout:.2f})", level="NO_TRADING")
+                save_strategy_decision(db, candle, f"Breakout haussier insuffisant ({breakout:.2f})")
             return
 
         elif candle["l"] < low_15:
             breakout = low_15 - candle["l"]
             if breakout >= 0.15 * range_size:
                 log_to_firestore(f"[{STRATEGY_KEY}] 🚨 Breakout baissier détecté ({breakout:.2f}) → en attente pullback LONG", level="TRADING")
+                save_strategy_decision(db, candle, f"Breakout baissier ({breakout:.2f})")
                 temp_doc_ref.set({
                     "direction": "LONG",
                     "breakout": breakout,
@@ -94,21 +101,23 @@ def process(candle):
                 })
             else:
                 log_to_firestore(f"[{STRATEGY_KEY}] ❌ Breakout baissier insuffisant ({breakout:.2f})", level="NO_TRADING")
+                save_strategy_decision(db, candle, f"Breakout baissier insuffisant ({breakout:.2f})")
             return
         else:
-            log_to_firestore(f"[{STRATEGY_KEY}] 🔍 Bougie sans breakout détecté", level="NO_TRADING")
+            save_strategy_decision(db, candle, "Aucun breakout détecté")
             return
 
-    # News sentiment
+    # Sentiment news
     score_docs = db.collection("news_sentiment_score").order_by("timestamp", direction="DESCENDING").limit(1).stream()
     score_doc = next(score_docs, None)
     if score_doc:
         note = score_doc.to_dict().get("note", 50)
         if (direction == "LONG" and note < SENTIMENT_THRESHOLD_LONG) or (direction == "SHORT" and note > SENTIMENT_THRESHOLD_SHORT):
-            log_to_firestore(f"🧠 [{STRATEGY_KEY}] Signal {direction} bloqué à cause du score news ({note})", level="NO_TRADING")
+            log_to_firestore(f"🧐 [{STRATEGY_KEY}] Signal {direction} bloqué à cause du score news ({note})", level="NO_TRADING")
+            save_strategy_decision(db, candle, f"Signal {direction} bloqué par news ({note})")
             return
 
-    # Trade déjà pris aujourd’hui ?
+    # Check si trade déjà pris
     trades_same_dir = list(db.collection("trading_days")
         .document(today)
         .collection("trades")
@@ -120,9 +129,11 @@ def process(candle):
         outcome = t.to_dict().get("outcome")
         if outcome != "loss":
             log_to_firestore(f"🔁 [{STRATEGY_KEY}] Trade {direction} déjà pris avec outcome {outcome}", level="TRADING")
+            save_strategy_decision(db, candle, f"Trade {direction} ignoré, déjà pris")
             return
 
     log_to_firestore(f"[{STRATEGY_KEY}] ✅ Signal validé : entrée {direction} après confirmation pullback", level="TRADING")
+    save_strategy_decision(db, candle, f"Trade {direction} exécuté")
 
     try:
         entry = get_entry_price()
@@ -133,7 +144,6 @@ def process(candle):
 
     buffer = max(0.3, 0.015 * range_size)
     spread_factor = entry / candle["c"]
-
     extreme_day = low_15 if direction == "LONG" else high_15
     sl_ref_polygon = min(extreme_day, candle["l"] - buffer) if direction == "LONG" else max(extreme_day, candle["h"] + buffer)
     sl_ref_oanda = sl_ref_polygon * spread_factor
@@ -163,6 +173,8 @@ def process(candle):
         "direction": direction,
         "units": executed_units,
         "timestamp": datetime.now().isoformat(),
+        "source_candle_id": f"{candle['sym']}_{candle['e']}",
+        "outcome": "unknown"
     })
 
     log_to_firestore(f"🚀 [{STRATEGY_KEY}] Trade confirmé exécuté à {entry} (SL: {sl_price}, TP: {tp_price})", level="TRADING")
