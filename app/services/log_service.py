@@ -31,7 +31,7 @@ def log_to_slack(message: str, level: str = "INFO"):
 
 def log_to_firestore(message: str, level="INFO", extra_data=None):
     # Slack uniquement si c'est un ordre de trading
-    log_to_slack(message, level)
+    # log_to_slack(message, level)
 
     try:
         db = get_firestore()
