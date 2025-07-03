@@ -68,7 +68,7 @@ def process(candle):
         decision_msg = f"Aucun breakout valide."
         log_to_firestore(f"🔍 [{STRATEGY_KEY}] {decision_msg}", level="NO_TRADING")
 
-    candle_id = f"SPX_{candle['e']}"
+    candle_id = f"{candle['sym']}_{candle['e']}"
     db.collection("ohlc_1m").document(candle_id).update({f"strategy_decisions.{STRATEGY_KEY}": decision_msg})
 
     if not direction:

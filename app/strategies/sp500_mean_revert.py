@@ -33,7 +33,7 @@ def process(candle):
     low_15 = range_data["low"]
     o = candle["o"]
     c = candle["c"]
-    candle_id = f"SPX_{candle['e']}"
+    candle_id = f"{candle['sym']}_{candle['e']}"
 
     direction = None
     sl_ref_polygon = None

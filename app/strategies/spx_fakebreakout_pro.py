@@ -43,7 +43,7 @@ def process(candle):
     close = candle["c"]
     direction = None
     breakout = 0
-    candle_id = f"SPX_{candle['e']}"
+    candle_id = f"{candle['sym']}_{candle['e']}"
 
     # ✅ Détection fake breakout
     if candle["h"] > high_15 and low_15 <= close <= high_15:

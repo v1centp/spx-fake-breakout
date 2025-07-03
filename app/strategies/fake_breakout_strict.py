@@ -66,7 +66,7 @@ def process(candle):
     log_level = "TRADING" if direction else "NO_TRADING"
     log_to_firestore(f"[{STRATEGY_KEY}] {msg}", level=log_level)
 
-    candle_id = f"SPX_{candle['e']}"
+    candle_id = f"{candle['sym']}_{candle['e']}"
     db.collection("ohlc_1m").document(candle_id).update({f"strategy_decisions.{STRATEGY_KEY}": msg})
 
     if not direction:
