@@ -18,16 +18,28 @@ Réponds uniquement en JSON :
 }
 """
 
-def fetch_news_summaries():
-    now = datetime.now(timezone.utc)
-    since = now - timedelta(hours=6)  # on lit les news des dernières heures
+def get_last_sentiment_data():
+    # Récupère la dernière note
+    query = db.collection("news_sentiment_score").order_by("timestamp", direction="DESCENDING").limit(1).stream()
+    for doc in query:
+        data = doc.to_dict()
+        return {
+            "timestamp": datetime.fromisoformat(data["timestamp"]),
+            "last_news_title": data.get("last_news_title", None)
+        }
+    return {"timestamp": datetime.now(timezone.utc) - timedelta(hours=6), "last_news_title": None}
+
+
+def fetch_news_summaries(since):
     query = db.collection("all_news") \
         .where("impact_score", ">=", 0.6) \
         .where("type", "in", ["macro", "breaking"]) \
-        .where("fetched_at", ">=", since.isoformat())
+        .where("fetched_at", ">=", since.isoformat()) \
+        .order_by("fetched_at", direction="DESCENDING")
 
     news = [n.to_dict() for n in query.stream()]
-    return [f"Titre: {n['title']}\nRésumé: {n.get('summary', '')}" for n in news if 'title' in n]
+    return news
+
 
 def update_sentiment_score():
     # Vérifie si on est entre 09:00 et 12:00 NY
@@ -36,12 +48,28 @@ def update_sentiment_score():
         print(f"⏱️ Hors plage horaire NY (actuel : {ny_time}) → skipping")
         return
 
-    summaries = fetch_news_summaries()
-    if not summaries:
-        print("⛔ Aucune news à analyser.")
+    # Récupère dernière exécution
+    last_data = get_last_sentiment_data()
+    last_check = last_data["timestamp"]
+    last_news_title = last_data["last_news_title"]
+
+    # News importantes depuis la dernière analyse
+    news = fetch_news_summaries(since=last_check)
+
+    if not news:
+        print(f"📭 Pas de nouvelles news depuis {last_check.isoformat()} → GPT skip")
         return
 
+    latest_title = news[0]["title"]
+    if latest_title == last_news_title:
+        print(f"♻️ Même dernière news (« {latest_title} ») → skipping GPT")
+        return
+
+    # Génère le prompt avec toutes les news
+    summaries = [f"Titre: {n['title']}\nRésumé: {n.get('summary', '')}" for n in news if 'title' in n]
+
     prompt = "Voici les news importantes du jour :\n\n" + "\n\n".join(summaries)
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     try:
         response = client.chat.completions.create(
@@ -54,17 +82,18 @@ def update_sentiment_score():
         )
         result = json.loads(response.choices[0].message.content.strip())
         note = max(0, min(100, int(result.get("note", 50))))
-        timestamp = datetime.now(timezone.utc).isoformat()
 
         db.collection("news_sentiment_score").add({
             "timestamp": timestamp,
             "note": note,
-            "justification": result.get("justification", "")
+            "justification": result.get("justification", ""),
+            "last_news_title": latest_title
         })
-        print(f"✅ Note news enregistrée : {note}")
+        print(f"✅ Nouvelle note enregistrée : {note} (news : {latest_title})")
 
     except Exception as e:
         print(f"❌ Erreur GPT ou Firestore : {e}")
+
 
 if __name__ == "__main__":
     update_sentiment_score()
