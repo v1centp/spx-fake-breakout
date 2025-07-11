@@ -7,7 +7,7 @@ from app.services.shared_strategy_tools import (
 )
 
 STRATEGY_KEY = "spx_breakout_pullback_filtered"
-RISK_CHF = 200
+RISK_CHF = 60
 SENTIMENT_THRESHOLD_LONG = 70
 SENTIMENT_THRESHOLD_SHORT = 30
 

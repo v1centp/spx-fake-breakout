@@ -17,7 +17,7 @@ from app.services.shared_strategy_tools import (
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 STRATEGY_KEY = "gpt_trader"
-RISK_CHF = 200
+RISK_CHF = 60
 MIN_DELAY_MINUTES = 5
 SENTIMENT_THRESHOLD_LONG = 70
 SENTIMENT_THRESHOLD_SHORT = 30

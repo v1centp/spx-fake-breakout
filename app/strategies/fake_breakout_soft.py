@@ -7,7 +7,7 @@ from app.services.shared_strategy_tools import (
 )
 
 STRATEGY_KEY = "sp500_fake_breakout_soft"
-RISK_CHF = 20
+RISK_CHF = 60
 
 def process(candle):
     db = get_firestore()

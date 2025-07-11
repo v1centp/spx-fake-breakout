@@ -7,7 +7,7 @@ from app.services.shared_strategy_tools import (
 )
 
 STRATEGY_KEY = "spx_fakebreakout_pro"
-RISK_CHF = 200
+RISK_CHF = 60
 
 def compute_position_size(entry, sl):
     risk_per_unit = abs(entry - sl)
