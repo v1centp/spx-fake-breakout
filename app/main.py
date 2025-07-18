@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers import balance, positions, strategy, market_data, logs  # ⬅️ Add this
 from app.services.polygon_ws import start_polygon_ws
 import threading
+from app.routers import trades  # 👈
+
 
 
 start_polygon_ws()
@@ -31,6 +33,8 @@ app.include_router(positions.router)
 app.include_router(strategy.router, prefix="/api")
 app.include_router(market_data.router, prefix="/api")  # ⬅️ Add this line
 app.include_router(logs.router, prefix="/api")  # ⬅️ Add this line
+app.include_router(trades.router, prefix="/api")  # 👈
+
 
 # Démarrage du WS dans un thread pour ne pas bloquer FastAPI
 @app.on_event("startup")
