@@ -17,7 +17,7 @@ origins = [
     "http://localhost:5173",  # Vite dev server
     "https://algo-project-e5b83.web.app",  # Deployed frontend
     "http://localhost:8000",  # FastAPI dev server
-    "http://localhost:5174'"
+    "http://localhost:5174"
 ]
 
 app.add_middleware(
