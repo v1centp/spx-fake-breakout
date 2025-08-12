@@ -1,27 +1,22 @@
-from app.strategies.fake_breakout_strict import process as strict_process
-from app.strategies import get_all_strategies
+from app.strategies.sp500_mean_revert import process as mean_revert_process
 
-
+# Range d'ouverture du 2025-08-12 : low=6395.17, high=6416.46
 fake_bar = {
     "ev": "AM",
     "sym": "I:SPX",
-    "op": 6193.360000000001,
-    "o": 6185.38,
-    "c": 6186.76,              # ✅ clôture dans le range
-    "h": 6186.76,              # ✅ dépasse high_15 (ex: 6018.2)
-    "l": 6185.38,
-    "s": 1751295900000,
-    "e": 1751295960000,
-    "utc_time": "2025-06-30 15:06:00",  # NY = 10:44
-    "day": "2025-06-30",
+    "op": 6421.80,             # open > high_15 (6416.46) -> setup SHORT
+    "o":  6421.80,             # idem
+    "c":  6410.25,             # close dans [6395.17, 6416.46]
+    "h":  6422.10,             # dépasse nettement le high_15
+    "l":  6402.30,
+    "s":  1755007560000,       # 2025-08-12 14:06:00 UTC (≈ 10:06 NY)
+    "e":  1755007620000,       # 2025-08-12 14:07:00 UTC
+    "utc_time": "2025-08-12 14:06:00",  # dans la fenêtre 09:45–11:30 NY
+    "day": "2025-08-12",
     "in_opening_range": False
 }
 
-for strategy_fn in get_all_strategies():
-                    try:
-                        strategy_fn(fake_bar)
-                    except Exception as e:
-                        print(f"❌ Erreur stratégie {strategy_fn.__name__} : {e}")
-                        
-                    
-
+try:
+    mean_revert_process(fake_bar)
+except Exception as e:
+    print(f"❌ Erreur stratégie sp500_mean_revert : {e}")
