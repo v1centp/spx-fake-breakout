@@ -7,7 +7,7 @@ from app.services.shared_strategy_tools import (
 )
 
 STRATEGY_KEY = "sp500_mean_revert"
-RISK_CHF = 50
+RISK_CHF = 20
 
 def process(candle):
     db = get_firestore()
