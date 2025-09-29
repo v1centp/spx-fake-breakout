@@ -1,38 +1,36 @@
+# app/services/range_manager.py
 from app.services.firebase import get_firestore
-from datetime import datetime, time
-import pytz
-from app.services.log_service import log_to_firestore
 
-def calculate_and_store_opening_range(day_str: str):
+def calculate_and_store_opening_range(day: str, symbol: str):
     db = get_firestore()
 
-    # Vérifie si le range a déjà été calculé
-    doc_ref = db.collection("opening_range").document(day_str)
-    if doc_ref.get().exists:
-        print(f"⏭️ Opening range déjà présent pour {day_str}, skip.")
-        return False
+    q = (db.collection("ohlc_1m")
+           .where("day", "==", day)
+           .where("sym", "==", symbol)
+           .where("in_opening_range", "==", True))
 
-    docs = db.collection("ohlc_1m") \
-        .where("day", "==", day_str) \
-        .where("in_opening_range", "==", True) \
-        .where("sym", "==", "I:SPX") \
-        .stream()
+    highs, lows = [], []
+    for d in q.stream():
+        x = d.to_dict() or {}
+        try:
+            h = float(x["h"]); l = float(x["l"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        highs.append(h); lows.append(l)
 
-    candles = [doc.to_dict() for doc in docs]
-    if len(candles) < 15:
-        return False
+    doc_ref = db.collection("opening_range").document(f"{day}_{symbol}")
 
-    high_15 = max(c["h"] for c in candles)
-    low_15 = min(c["l"] for c in candles)
-    range_size = high_15 - low_15
+    if not highs or not lows:
+        doc_ref.set({"day": day, "symbol": symbol, "status": "empty", "count": 0})
+        return
 
+    hi, lo = max(highs), min(lows)
     doc_ref.set({
-        "day": day_str,
-        "high": high_15,
-        "low": low_15,
-        "range_size": range_size,
+        "day": day,
+        "symbol": symbol,
+        "high": hi,
+        "low": lo,
+        "range": round(hi - lo, 5),
+        "count": len(highs),
         "status": "ready"
     })
-
-    log_to_firestore(f"📊 Opening Range {day_str} — High: {high_15}, Low: {low_15}, Size: {range_size:.2f}")
-    return True
