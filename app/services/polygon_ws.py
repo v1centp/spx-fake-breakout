@@ -4,7 +4,7 @@ from polygon.websocket.models import Feed, Market, EquityAgg
 from typing import List
 from threading import Thread
 from app.services.firebase import get_firestore
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from app.services.range_manager import calculate_and_store_opening_range
 from app.services.log_service import log_to_firestore
@@ -15,53 +15,58 @@ import os, pytz
 load_dotenv()
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
 
-NY = pytz.timezone("America/New_York")
-OPEN = datetime.strptime("09:30", "%H:%M").time()
-CUTOFF = datetime.strptime("09:45", "%H:%M").time()
+def _parse_hhmm(s):  # "09:00" -> (9,0)
+    h,m = s.split(":"); return int(h), int(m)
 
-def handle_msg(msgs: List[EquityAgg]):
+def _session_for(sym):
+    s = UNIVERSE.get(sym, {}).get("session", {})
+    tz = pytz.timezone(s.get("tz", "America/New_York"))
+    oh, om = _parse_hhmm(s.get("open", "09:30"))
+    or_minutes = int(s.get("or_minutes", 15))
+    th, tm = _parse_hhmm(s.get("trade_end", "11:30"))
+    return tz, oh, om, or_minutes, th, tm
+
+def handle_msg(msgs):
     db = get_firestore()
-
     for m in msgs:
         try:
-            dt_utc = datetime.fromtimestamp(m.end_timestamp / 1000, tz=timezone.utc)
-            dt_ny = dt_utc.astimezone(NY)
-            in_open = OPEN <= dt_ny.time() <= CUTOFF
+            dt_utc = datetime.fromtimestamp(m.end_timestamp/1000, tz=timezone.utc)
+            sym = m.symbol
+            tz, oh, om, or_min, th, tm = _session_for(sym)
+            dt_local = dt_utc.astimezone(tz)
+
+            open_start = dt_local.replace(hour=oh, minute=om, second=0, microsecond=0)
+            open_end   = open_start + timedelta(minutes=or_min)      # fin de la fenêtre range
+            trade_end  = dt_local.replace(hour=th, minute=tm, second=0, microsecond=0)
+
+            in_open = open_start.time() <= dt_local.time() <= open_end.time()
 
             candle = {
-                "ev": m.event_type,
-                "sym": m.symbol,               # ex: AM.I:SPX
+                "ev": m.event_type, "sym": sym,
                 "op": m.official_open_price,
-                "o": m.open,
-                "c": m.close,
-                "h": m.high,
-                "l": m.low,
-                "s": m.start_timestamp,
-                "e": m.end_timestamp,
+                "o": m.open, "c": m.close, "h": m.high, "l": m.low,
+                "s": m.start_timestamp, "e": m.end_timestamp,
                 "utc_time": dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
                 "day": dt_utc.strftime("%Y-%m-%d"),
-                "in_opening_range": in_open
+                "in_opening_range": in_open,
             }
+            db.collection("ohlc_1m").document(f"{sym}_{m.end_timestamp}").set(candle)
 
-            doc_id = f"{m.symbol}_{m.end_timestamp}"
-            db.collection("ohlc_1m").document(doc_id).set(candle)
+            # À la fin de la fenêtre d’ouverture LOCALE → calcule le range pour CE symbole
+            if dt_local.strftime("%H:%M") == open_end.strftime("%H:%M"):
+                day_str = dt_local.strftime("%Y-%m-%d")
+                log_to_firestore(f"🕒 {sym} {open_end.strftime('%H:%M %Z')} → calc range {day_str}")
+                calculate_and_store_opening_range(day=day_str, symbol=sym)
 
-            # 09:45 NY → calcul du range pour CE symbole uniquement
-            if dt_ny.time().strftime("%H:%M") == "09:45":
-                day_str = dt_ny.strftime("%Y-%m-%d")
-                log_to_firestore(f"🕒 09:45 NY → Calcul du range {m.symbol} pour {day_str}")
-                calculate_and_store_opening_range(day=day_str, symbol=m.symbol)
-
-            # Exécution des stratégies hors opening range
-            if not in_open and UNIVERSE.get(m.symbol, {}).get("active", False):
-                for strategy_fn in get_all_strategies():
+            # Exécuter stratégies en dehors de la fenêtre range (mais avant trade_end)
+            if not in_open and dt_local.time() <= trade_end.time() and UNIVERSE.get(sym,{}).get("active",False):
+                for fn in get_all_strategies():
                     try:
-                        strategy_fn(candle)  # ↓ la stratégie lira symbol → instrument
+                        fn(candle)
                     except Exception as e:
-                        log_to_firestore(f"❌ Erreur stratégie {strategy_fn.__name__} ({m.symbol}) : {e}", level="ERROR")
-
+                        log_to_firestore(f"❌ Strat {fn.__name__} ({sym}) : {e}", level="ERROR")
         except Exception as e:
-            log_to_firestore(f"⚠️ Erreur traitement WS ({getattr(m,'symbol','?')}): {e}", level="ERROR")
+            log_to_firestore(f"⚠️ WS error ({getattr(m,'symbol','?')}) : {e}", level="ERROR")
 
 def start_polygon_ws():
     client = WebSocketClient(api_key=POLYGON_API_KEY, feed=Feed.RealTime, market=Market.Indices)
