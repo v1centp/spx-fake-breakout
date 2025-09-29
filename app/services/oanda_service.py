@@ -54,27 +54,24 @@ def get_open_positions():
 def create_order(instrument, entry_price, stop_loss_price, take_profit_price, units):
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/orders"
 
-    # 🔐 Units doivent être un entier et en string
-    units_str = str(int(units))
+    qty = round(float(units), 1)              # ex: 0.73 -> 0.7 ; 1.25 -> 1.2 (si tu veux CEIL, dis-le)
+    units_str = f"{qty:.1f}"
+    if units_str in ("0.0", "-0.0"):
+        raise ValueError(f"units too small: {units}")
 
     data = {
         "order": {
-            "units": units_str,
+            "units": units_str,  # << string décimale, pas int !
             "instrument": instrument,
             "timeInForce": "FOK",
             "type": "MARKET",
             "positionFill": "DEFAULT",
-            "stopLossOnFill": {
-                "price": format_price(stop_loss_price, instrument)
-            },
-            "takeProfitOnFill": {
-                "price": format_price(take_profit_price, instrument)
-            }
+            "stopLossOnFill":   {"price": format_price(stop_loss_price, instrument)},
+            "takeProfitOnFill": {"price": format_price(take_profit_price, instrument)}
         }
     }
 
     log_to_firestore(f"📈 Création d'ordre OANDA DATA : {data, url}", level="OANDA")
-
     response = requests.post(url, headers=headers, json=data)
     if not response.ok:
         log_to_firestore(f"❌ Erreur OANDA : {response.status_code} — {response.text}", level="ERROR")

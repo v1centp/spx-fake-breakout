@@ -34,6 +34,7 @@ def execute_trade(instrument: str, entry_price, sl_price, tp_price, units, direc
     - on applique le signe selon la direction
     """
     qty = _floor_step(abs(float(units)))      # sécurise au pas 0.1
+    print(f"execute_trade: {units} -> {qty} ({direction})")
     if qty < STEP:
         raise ValueError(f"units too small (< {STEP}): {units}")
     signed = -qty if direction == "SHORT" else qty
