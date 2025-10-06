@@ -84,6 +84,6 @@ def start_polygon_ws():
         log_to_firestore("⚠️ Aucun symbole actif dans UNIVERSE", level="ERROR")
 
     for sym in symbols:
-        client.subscribe(sym)
+        client.subscribe('AM.'+sym)
 
     Thread(target=client.run, args=(handle_msg,), daemon=True).start()
