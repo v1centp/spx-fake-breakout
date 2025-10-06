@@ -1,6 +1,6 @@
 # tests/run_mean_revert_live_oanda.py
 from datetime import datetime, timedelta, timezone
-import pytz
+import pytzyxx
 
 from app.services.firebase import get_firestore
 import app.strategies.sp_mean_revert_multi as strat   # on n'altère rien

@@ -11,6 +11,8 @@ from app.services.log_service import log_to_firestore
 from app.strategies import get_all_strategies
 from app.config.universe import UNIVERSE
 import os, pytz
+from app.utils.symbols import normalize_symbol
+
 
 load_dotenv()
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
@@ -40,7 +42,8 @@ def handle_msg(msgs):
             trade_end  = dt_local.replace(hour=th, minute=tm, second=0, microsecond=0)
 
             in_open = open_start.time() <= dt_local.time() <= open_end.time()
-
+            sym_raw = m.symbol
+            sym = normalize_symbol(sym_raw)
             candle = {
                 "ev": m.event_type, "sym": sym,
                 "op": m.official_open_price,

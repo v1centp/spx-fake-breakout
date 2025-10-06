@@ -7,6 +7,8 @@ from app.config.universe import UNIVERSE
 from app.services.shared_strategy_tools import (
     get_entry_price, calculate_sl_tp, compute_position_size, execute_trade
 )
+from app.utils.symbols import normalize_symbol
+
 
 STRATEGY_KEY = "mean_revert"
 DEFAULT_RISK_CHF = 50
@@ -21,10 +23,12 @@ def _session_for(sym):
 
 def process(candle):
     db = get_firestore()
-    sym = candle["sym"]
+    sym_raw = candle["sym"]
+    sym = normalize_symbol(sym_raw)
     today = candle["day"]     # ✅ FIX: définir 'today' immédiatement
     cfg = UNIVERSE.get(sym)
     if not cfg or not cfg.get("active"):
+        log_to_firestore(f"⏭️ [{STRATEGY_KEY}] {sym_raw} ignoré (cfg introuvable pour {sym})", level="INFO")
         return
     instrument = cfg["instrument"]
     risk_chf   = cfg.get("risk_chf", DEFAULT_RISK_CHF)
@@ -47,8 +51,10 @@ def process(candle):
         return
 
     # Range d’ouverture (par symbole)
-    range_doc = db.collection("opening_range").document(f"{today}_{sym}").get().to_dict()
+    range_doc = (db.collection("opening_range")
+                   .document(f"{today}_{sym}").get().to_dict())
     if not range_doc or range_doc.get("status") != "ready":
+        log_to_firestore(f"⏳ [{STRATEGY_KEY}::{sym}] opening_range manquant ({today}_{sym})", level="INFO")
         return
 
     high_15, low_15 = range_doc["high"], range_doc["low"]
