@@ -17,7 +17,7 @@ def calculate_sl_tp(entry, sl_level, direction):
     risk = abs(entry - sl_level)
     if risk == 0:
         return None, None, 0
-    tp = entry + 1.75 * risk if direction == "LONG" else entry - 1.75 * risk
+    tp = entry + 2.75 * risk if direction == "LONG" else entry - 2.75 * risk
     return round(sl_level, 2), round(tp, 2), risk
 
 def compute_position_size(risk_per_unit, risk_limit=50):
