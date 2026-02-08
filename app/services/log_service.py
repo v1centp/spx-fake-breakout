@@ -46,3 +46,18 @@ def log_to_firestore(message: str, level="INFO", extra_data=None):
     except Exception as e:
         # Si Firestore échoue, on logue l'erreur sur Slack
         log_to_slack(f"Firestore logging failed: {e}", level="ERROR")
+
+
+def log_trade_event(trade_ref, event_type: str, message: str, data: dict = None):
+    """Log an event to a trade's events subcollection."""
+    try:
+        event = {
+            "type": event_type,
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        if data:
+            event["data"] = data
+        trade_ref.collection("events").add(event)
+    except Exception as e:
+        print(f"[log_trade_event] Failed: {e}")

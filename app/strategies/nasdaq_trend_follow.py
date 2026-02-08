@@ -1,4 +1,4 @@
-# app/strategies/sp_mean_revert_multi.py
+# app/strategies/nasdaq_trend_follow.py
 from datetime import datetime, timezone, timedelta
 import pytz
 from app.services.firebase import get_firestore
@@ -7,10 +7,10 @@ from app.config.universe import UNIVERSE
 from app.services.shared_strategy_tools import (
     get_entry_price, calculate_sl_tp, compute_position_size, execute_trade
 )
-from app.services import oanda_service
 
-STRATEGY_KEY = "mean_revert"
+STRATEGY_KEY = "trend_follow"
 DEFAULT_RISK_CHF = 50
+
 
 def _session_for(sym: str):
     s = UNIVERSE.get(sym, {}).get("session", {})
@@ -20,8 +20,9 @@ def _session_for(sym: str):
     th, tm = map(int, s.get("trade_end", "11:30").split(":"))
     return tz, oh, om, or_min, th, tm
 
+
 def process(candle: dict):
-    if candle["sym"] != "I:SPX":
+    if candle["sym"] != "I:NDX":
         return
 
     db = get_firestore()
@@ -36,15 +37,14 @@ def process(candle: dict):
     settings = db.collection("config").document("settings").get().to_dict() or {}
     risk_chf = settings.get("risk_chf", DEFAULT_RISK_CHF)
 
-    # Fenêtre horaire locale par symbole
+    # Fenetre horaire locale
     utc_dt = datetime.strptime(candle["utc_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     tz, oh, om, or_min, th, tm = _session_for(sym)
     loc = utc_dt.astimezone(tz)
     open_start = loc.replace(hour=oh, minute=om, second=0, microsecond=0)
-    open_end   = open_start + timedelta(minutes=or_min)
-    trade_end  = loc.replace(hour=th, minute=tm, second=0, microsecond=0)
+    open_end = open_start + timedelta(minutes=or_min)
+    trade_end = loc.replace(hour=th, minute=tm, second=0, microsecond=0)
 
-    # On ne trade qu'entre fin du range d'ouverture et fin de session
     if loc < open_end or loc > trade_end:
         return
 
@@ -53,27 +53,29 @@ def process(candle: dict):
     if not strat_cfg.get(STRATEGY_KEY, False):
         return
 
-    # Range d’ouverture (doc clé = f"{day}_{sym}")
+    # Opening range
     rdoc = db.collection("opening_range").document(f"{today}_{sym}").get().to_dict()
     if not rdoc or rdoc.get("status") != "ready":
-        log_to_firestore(f"⏳ [{STRATEGY_KEY}::{sym}] opening_range manquant ({today}_{sym})", level="INFO")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] opening_range manquant ({today}_{sym})", level="INFO")
         return
 
     high_15, low_15 = float(rdoc["high"]), float(rdoc["low"])
     o, c = float(candle["o"]), float(candle["c"])
     candle_id = f"{sym}_{candle['e']}"
 
-    # Logique mean-revert
+    # Signal trend following (ORB strict)
+    # LONG  : open DANS le range ET close AU-DESSUS
+    # SHORT : open DANS le range ET close EN-DESSOUS
     direction = None
-    if o > high_15 and low_15 <= c <= high_15:
-        direction = "SHORT"
-    elif o < low_15 and low_15 <= c <= high_15:
+    if low_15 <= o <= high_15 and c > high_15:
         direction = "LONG"
+    elif low_15 <= o <= high_15 and c < low_15:
+        direction = "SHORT"
     else:
         db.collection("ohlc_1m").document(candle_id).update(
             {f"strategy_decisions.{STRATEGY_KEY}": "REJECT: conditions non remplies"}
         )
-        log_to_firestore(f"❌ [{STRATEGY_KEY}::{sym}] Conditions non remplies", level="NO_TRADING")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Conditions non remplies", level="NO_TRADING")
         return
 
     db.collection("ohlc_1m").document(candle_id).update(
@@ -90,56 +92,40 @@ def process(candle: dict):
           .stream()
     )
     if trades_same_dir:
-        log_to_firestore(f"🔁 [{STRATEGY_KEY}::{sym}] Trade {direction} déjà exécuté aujourd'hui.", level="TRADING")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Trade {direction} deja execute aujourd'hui.", level="TRADING")
         return
 
-    log_to_firestore(f"[{STRATEGY_KEY}::{sym}] 📌 Signal {direction} détecté", level="TRADING")
+    log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Signal {direction} detecte", level="TRADING")
 
-    # Prix d'entrée OANDA
+    # Prix d'entree OANDA
     try:
         entry = float(get_entry_price(instrument))
-        log_to_firestore(f"💵 [{STRATEGY_KEY}::{sym}] Prix {instrument} : {entry}", level="OANDA")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Prix {instrument} : {entry}", level="OANDA")
     except Exception as e:
-        log_to_firestore(f"⚠️ [{STRATEGY_KEY}::{sym}] Erreur prix OANDA : {e}", level="ERROR")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Erreur prix OANDA : {e}", level="ERROR")
         return
 
-    # SL basé sur les candles OANDA (prix broker natifs, zéro conversion)
-    sl_buffer = cfg.get("sl_buffer", 3.0)
-    from_utc = open_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    try:
-        oanda_candles = oanda_service.get_candles(instrument, from_utc, now_utc)
-    except Exception as e:
-        log_to_firestore(f"⚠️ [{STRATEGY_KEY}::{sym}] Erreur candles OANDA : {e}", level="ERROR")
-        return
+    # SL = milieu du range
+    sl_midpoint = (high_15 + low_15) / 2
 
-    if not oanda_candles:
-        log_to_firestore(f"❌ [{STRATEGY_KEY}::{sym}] Aucune candle OANDA retournée", level="ERROR")
-        return
-
-    if direction == "SHORT":
-        sl_ref = max(c_oanda["h"] for c_oanda in oanda_candles) + sl_buffer
-    else:
-        sl_ref = min(c_oanda["l"] for c_oanda in oanda_candles) - sl_buffer
-
-    # SL/TP
-    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_ref, direction)
+    # SL/TP avec 1.5R
+    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_midpoint, direction, tp_ratio=1.5)
     if not risk_per_unit:
-        log_to_firestore(f"❌ [{STRATEGY_KEY}::{sym}] Risque nul.", level="ERROR")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Risque nul.", level="ERROR")
         return
 
     # Position sizing
     units = compute_position_size(risk_per_unit, risk_chf)
     if units < 0.1:
-        log_to_firestore(f"❌ [{STRATEGY_KEY}::{sym}] Taille position trop faible ({units})", level="ERROR")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Taille position trop faible ({units})", level="ERROR")
         return
 
-    # Exécution
+    # Execution
     try:
         result = execute_trade(instrument, entry, sl_price, tp_price, units, direction)
-        log_to_firestore(f"✅ [{STRATEGY_KEY}::{sym}] Ordre {direction} exécuté ({result['units']})", level="TRADING")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Ordre {direction} execute ({result['units']})", level="TRADING")
     except Exception as e:
-        log_to_firestore(f"⚠️ [{STRATEGY_KEY}::{sym}] Erreur exécution : {e}", level="ERROR")
+        log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Erreur execution : {e}", level="ERROR")
         return
 
     # Enregistrement trade

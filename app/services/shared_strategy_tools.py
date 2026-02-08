@@ -13,11 +13,11 @@ def _floor_step(x: float, step: float = STEP) -> float:
 def get_entry_price(instrument: str):
     return oanda_service.get_latest_price(instrument)
 
-def calculate_sl_tp(entry, sl_level, direction):
+def calculate_sl_tp(entry, sl_level, direction, tp_ratio=2.75):
     risk = abs(entry - sl_level)
     if risk == 0:
         return None, None, 0
-    tp = entry + 2.75 * risk if direction == "LONG" else entry - 2.75 * risk
+    tp = entry + tp_ratio * risk if direction == "LONG" else entry - tp_ratio * risk
     return round(sl_level, 2), round(tp, 2), risk
 
 def compute_position_size(risk_per_unit, risk_limit=50):

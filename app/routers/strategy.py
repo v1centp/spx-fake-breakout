@@ -25,3 +25,20 @@ async def toggle_strategy(request: Request):
 
     ref.update({strategy_name: not current})
     return {strategy_name: not current}
+
+@router.get("/config/risk")
+def get_risk_config():
+    db = get_firestore()
+    doc = db.collection("config").document("settings").get()
+    data = doc.to_dict() or {}
+    return {"risk_chf": data.get("risk_chf", 50)}
+
+@router.put("/config/risk")
+async def update_risk_config(request: Request):
+    body = await request.json()
+    risk_chf = body.get("risk_chf")
+    if risk_chf is None or not isinstance(risk_chf, (int, float)) or risk_chf <= 0:
+        return {"error": "risk_chf doit etre un nombre positif"}
+    db = get_firestore()
+    db.collection("config").document("settings").set({"risk_chf": risk_chf}, merge=True)
+    return {"risk_chf": risk_chf}

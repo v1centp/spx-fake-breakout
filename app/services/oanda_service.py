@@ -130,6 +130,31 @@ def list_instruments():
         for inst in raw
     ]
 
+def close_trade(trade_id: str):
+    url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/trades/{trade_id}/close"
+    response = requests.put(url, headers=headers)
+    if not response.ok:
+        log_to_firestore(
+            f"Erreur OANDA close trade {trade_id}: {response.status_code} — {response.text}",
+            level="ERROR"
+        )
+    response.raise_for_status()
+    return response.json()
+
+
+def modify_trade_sl(trade_id: str, new_sl_price: float, instrument: str):
+    url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/trades/{trade_id}/orders"
+    data = {"stopLoss": {"price": format_price(new_sl_price, instrument)}}
+    response = requests.put(url, headers=headers, json=data)
+    if not response.ok:
+        log_to_firestore(
+            f"❌ Erreur OANDA modify SL trade {trade_id}: {response.status_code} — {response.text}",
+            level="ERROR"
+        )
+    response.raise_for_status()
+    return response.json()
+
+
 def get_trade_details(trade_id: str):
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/trades/{trade_id}"
     response = requests.get(url, headers=headers)
@@ -151,3 +176,26 @@ def get_closed_trades(count: int = 500):
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
     return response.json().get("trades", [])
+
+def get_candles(instrument: str, from_time: str, to_time: str, granularity: str = "M1") -> list:
+    url = f"{OANDA_API_URL}/instruments/{instrument}/candles"
+    params = {
+        "granularity": granularity,
+        "from": from_time,
+        "to": to_time,
+        "price": "M",
+    }
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    raw = response.json().get("candles", [])
+    return [
+        {
+            "time": c["time"],
+            "o": float(c["mid"]["o"]),
+            "h": float(c["mid"]["h"]),
+            "l": float(c["mid"]["l"]),
+            "c": float(c["mid"]["c"]),
+            "complete": c.get("complete", False),
+        }
+        for c in raw
+    ]
