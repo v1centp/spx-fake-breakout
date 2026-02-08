@@ -26,7 +26,7 @@ app.add_middleware(
 )
 
 app.include_router(balance.router)
-app.include_router(positions.router)
+app.include_router(positions.router, prefix="/api")
 app.include_router(strategy.router, prefix="/api")
 app.include_router(market_data.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")
