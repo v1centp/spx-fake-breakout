@@ -8,6 +8,9 @@ from app.services.log_service import log_to_firestore
 _cache = {}
 CACHE_TTL = 30  # seconds
 
+_day_cache = {}  # key: event_date -> {events: [...], ts: ...}
+DAY_CACHE_TTL = 300  # 5 minutes — avoids redundant API calls for same-day events
+
 TE_API_URL = "https://api.tradingeconomics.com/calendar"
 TE_API_KEY = os.getenv("TRADINGECONOMICS_API_KEY", "guest:guest")
 
@@ -102,6 +105,35 @@ def calculate_surprise(actual: float, forecast: float) -> dict:
     }
 
 
+def _fetch_te_day_events(event_date: str) -> list:
+    """Fetch and cache all TradingEconomics high-impact events for a given date.
+
+    Uses a 5-minute cache so that multiple events at the same time
+    (e.g. CPI + NFP + Claims all at 18:30) share a single API call.
+    """
+    now = time.time()
+
+    if event_date in _day_cache and now - _day_cache[event_date]["ts"] < DAY_CACHE_TTL:
+        return _day_cache[event_date]["events"]
+
+    resp = requests.get(TE_API_URL, params={
+        "c": TE_API_KEY,
+        "f": "json",
+        "importance": 3,
+        "d1": event_date,
+        "d2": event_date,
+    }, timeout=15)
+    resp.raise_for_status()
+    events = resp.json()
+
+    _day_cache[event_date] = {"events": events, "ts": now}
+    log_to_firestore(
+        f"[NewsData] Cached {len(events)} TE events for {event_date}",
+        level="INFO"
+    )
+    return events
+
+
 def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
     """
     Fetch actual value from TradingEconomics API for a specific event.
@@ -123,15 +155,7 @@ def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
             return cached["data"]
 
     try:
-        resp = requests.get(TE_API_URL, params={
-            "c": TE_API_KEY,
-            "f": "json",
-            "importance": 3,
-            "d1": event_date,
-            "d2": event_date,
-        }, timeout=15)
-        resp.raise_for_status()
-        events = resp.json()
+        events = _fetch_te_day_events(event_date)
 
         for ev in events:
             ev_title = ev.get("Event", "")

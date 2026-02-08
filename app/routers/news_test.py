@@ -139,17 +139,24 @@ async def test_news_pipeline(request: Request):
 
 @router.get("/news/scheduled")
 def get_scheduled_events():
-    """List all currently scheduled news events and their state."""
-    events = []
-    for event_id, state in news_scheduler._event_state.items():
-        events.append({
-            "event_id": event_id,
-            "title": state["event"]["title"],
-            "country": state["event"]["country"],
+    """List all currently scheduled news event groups and their state."""
+    groups = []
+    for group_id, state in news_scheduler._event_state.items():
+        events_info = []
+        for entry in state.get("events", []):
+            events_info.append({
+                "event_id": entry["event_id"],
+                "title": entry["event"]["title"],
+                "country": entry["event"]["country"],
+                "surprise": entry.get("surprise"),
+            })
+        groups.append({
+            "group_id": group_id,
             "instrument": state["instrument"],
             "event_time": state["event_time"].isoformat() if state.get("event_time") else None,
+            "events": events_info,
+            "event_count": len(events_info),
             "has_pre_analysis": state.get("pre_analysis") is not None,
-            "has_surprise": state.get("surprise") is not None,
-            "surprise": state.get("surprise"),
+            "best_event_idx": state.get("best_event_idx"),
         })
-    return {"scheduled_events": events, "count": len(events)}
+    return {"groups": groups, "count": len(groups)}
