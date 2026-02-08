@@ -116,12 +116,11 @@ def _fetch_te_day_events(event_date: str) -> list:
     if event_date in _day_cache and now - _day_cache[event_date]["ts"] < DAY_CACHE_TTL:
         return _day_cache[event_date]["events"]
 
-    resp = requests.get(TE_API_URL, params={
+    url = f"{TE_API_URL}/country/All/{event_date}/{event_date}"
+    resp = requests.get(url, params={
         "c": TE_API_KEY,
         "f": "json",
         "importance": 3,
-        "d1": event_date,
-        "d2": event_date,
     }, timeout=15)
     resp.raise_for_status()
     events = resp.json()
