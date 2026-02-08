@@ -80,3 +80,18 @@ def get_upcoming_events(oanda_instrument: str) -> list:
         if ev_time and ev_time > now - timedelta(hours=2):
             relevant.append({**ev, "datetime_utc": ev_time.isoformat() if ev_time else None})
     return relevant[:10]
+
+
+def get_all_upcoming_events() -> list:
+    """Retourne tous les events du jour, toutes devises confondues."""
+    try:
+        events = _fetch_calendar()
+    except Exception:
+        return []
+    now = datetime.now(pytz.utc)
+    relevant = []
+    for ev in events:
+        ev_time = _parse_event_datetime(ev)
+        if ev_time and ev_time > now - timedelta(hours=4):
+            relevant.append({**ev, "datetime_utc": ev_time.isoformat() if ev_time else None})
+    return relevant[:30]

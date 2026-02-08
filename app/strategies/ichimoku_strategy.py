@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 from app.services.firebase import get_firestore
 from app.services.log_service import log_to_firestore, log_trade_event
 from app.config.instrument_map import resolve_instrument
-from app.services.calendar_service import check_high_impact_nearby, get_upcoming_events
-from app.services.ichimoku_analyzer import rule_based_filter, gpt_analysis
+from app.services.calendar_service import check_high_impact_nearby, get_all_upcoming_events
+from app.services.ichimoku_analyzer import rule_based_filter, gpt_macro_analysis
 from app.services.shared_strategy_tools import (
     get_entry_price, calculate_sl_tp, compute_position_size, execute_trade
 )
@@ -30,6 +30,7 @@ def process_webhook_signal(body: dict) -> dict:
     decimals = inst_cfg["decimals"]
     step = inst_cfg["step"]
     tp_ratio = inst_cfg.get("tp_ratio", 2.0)
+    sl_buffer = inst_cfg.get("sl_buffer", 0)
 
     db = get_firestore()
 
@@ -73,20 +74,26 @@ def process_webhook_signal(body: dict) -> dict:
         )
         return {"status": "REJECT", "reason": "High-impact economic event nearby"}
 
-    # 5. GPT analysis
-    calendar_events = get_upcoming_events(oanda_instrument)
-    gpt_result = gpt_analysis(signal, calendar_events)
+    # 5. GPT : analyse macro globale → biais directionnel
+    all_events = get_all_upcoming_events()
+    macro_result = gpt_macro_analysis(oanda_instrument, all_events)
 
     log_to_firestore(
-        f"[{STRATEGY_KEY}] GPT: {gpt_result.get('decision')} (confidence: {gpt_result.get('confidence')}) - {gpt_result.get('reason')}",
+        f"[{STRATEGY_KEY}] GPT Macro: {macro_result.get('bias')} (confidence: {macro_result.get('confidence')}) - {macro_result.get('analysis', '')[:100]}",
         level="WEBHOOK"
     )
 
-    if gpt_result.get("decision") != "GO" or gpt_result.get("confidence", 0) < MIN_CONFIDENCE:
+    # Verifier alignement biais macro / direction du trade
+    macro_bias = macro_result.get("bias", "NEUTRAL")
+    bias_aligned = (
+        (direction == "LONG" and macro_bias == "BULLISH") or
+        (direction == "SHORT" and macro_bias == "BEARISH")
+    )
+    if not bias_aligned and macro_bias != "NEUTRAL":
         return {
             "status": "REJECT",
-            "reason": f"GPT: {gpt_result.get('decision')} (confidence: {gpt_result.get('confidence')})",
-            "gpt": gpt_result
+            "reason": f"Macro bias ({macro_bias}) oppose au signal ({direction})",
+            "gpt_macro": macro_result
         }
 
     # 6. Execution
@@ -116,8 +123,11 @@ def process_webhook_signal(body: dict) -> dict:
         log_to_firestore(f"[{STRATEGY_KEY}] Erreur prix OANDA: {e}", level="ERROR")
         return {"status": "ERROR", "reason": f"Price fetch failed: {e}"}
 
-    # SL = Kijun-sen
-    sl_level = signal["kijun"]
+    # SL = Kijun-sen + buffer (LONG: en-dessous, SHORT: au-dessus)
+    if direction == "LONG":
+        sl_level = signal["kijun"] - sl_buffer
+    else:
+        sl_level = signal["kijun"] + sl_buffer
 
     # SL/TP
     sl_price, tp_price, risk_per_unit = calculate_sl_tp(
@@ -164,8 +174,9 @@ def process_webhook_signal(body: dict) -> dict:
         "outcome": "open",
         "oanda_trade_id": result.get("oanda_trade_id"),
         "fill_price": result.get("fill_price"),
-        "gpt_confidence": gpt_result.get("confidence"),
-        "gpt_reason": gpt_result.get("reason"),
+        "gpt_macro_bias": macro_result.get("bias"),
+        "gpt_macro_confidence": macro_result.get("confidence"),
+        "gpt_macro_analysis": macro_result.get("analysis"),
         "ichimoku_reasons": rb_result["reasons"],
     }
     trade_ref.set(trade_data)
@@ -196,5 +207,5 @@ def process_webhook_signal(body: dict) -> dict:
         "tp": tp_price,
         "units": result["units"],
         "oanda_trade_id": result.get("oanda_trade_id"),
-        "gpt": gpt_result,
+        "gpt_macro": macro_result,
     }

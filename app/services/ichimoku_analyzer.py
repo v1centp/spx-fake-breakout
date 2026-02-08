@@ -50,38 +50,8 @@ def rule_based_filter(signal: dict) -> dict:
     return {"valid": True, "direction": d, "reasons": reasons}
 
 
-def gpt_analysis(signal: dict, calendar_events: list) -> dict:
-    calendar_text = "\n".join(
-        f"- {e['time']} {e['country']}: {e['title']} (impact: {e['impact']})"
-        for e in calendar_events
-    ) or "Aucun evenement majeur proche."
-
-    prompt = f"""Tu es un analyste forex specialise en Ichimoku Kinko Hyo sur timeframe H1.
-
-Signal detecte:
-- Instrument: {signal.get('instrument', 'N/A')}
-- Direction: {signal['direction']}
-- Prix actuel: {signal['close']}
-- Tenkan-sen: {signal['tenkan']}
-- Kijun-sen: {signal['kijun']}
-- SSA (Senkou Span A): {signal['ssa']}
-- SSB (Senkou Span B): {signal['ssb']}
-- Chikou Span: {signal.get('chikou', 'N/A')}
-
-Calendrier economique du jour:
-{calendar_text}
-
-Analyse ce signal et reponds en JSON strict:
-{{"decision": "GO" ou "NO_GO", "confidence": 0-100, "reason": "explication courte"}}
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=200,
-    )
-    text = response.choices[0].message.content.strip()
+def _parse_gpt_json(text: str) -> dict:
+    """Parse JSON from GPT response, handling markdown code blocks."""
     try:
         if "```" in text:
             text = text.split("```")[1]
@@ -89,4 +59,43 @@ Analyse ce signal et reponds en JSON strict:
                 text = text[4:]
         return json.loads(text.strip())
     except Exception:
-        return {"decision": "NO_GO", "confidence": 0, "reason": f"Parse error: {text[:100]}"}
+        return None
+
+
+def gpt_macro_analysis(oanda_instrument: str, all_events: list) -> dict:
+    """Etape 1 : analyse macro — quelle est la tendance attendue sur l'instrument
+    en fonction de TOUTES les news economiques du jour ?"""
+
+    base, quote = oanda_instrument.split("_")
+
+    calendar_text = "\n".join(
+        f"- {e['time']} {e['country']}: {e['title']} (impact: {e['impact']}, forecast: {e.get('forecast','N/A')}, previous: {e.get('previous','N/A')})"
+        for e in all_events
+    ) or "Aucun evenement economique notable."
+
+    prompt = f"""Tu es un analyste macro forex. Voici le calendrier economique complet du jour (toutes devises):
+
+{calendar_text}
+
+En te basant sur ces evenements, quelle est ta vision pour la paire {base}/{quote} aujourd'hui ?
+- Quelles news pourraient impacter {base} (haussier ou baissier) ?
+- Quelles news pourraient impacter {quote} (haussier ou baissier) ?
+- Quel est le biais directionnel resultant pour {base}/{quote} ?
+
+Reponds en JSON strict:
+{{"bias": "BULLISH" ou "BEARISH" ou "NEUTRAL", "confidence": 0-100, "analysis": "explication courte de ton raisonnement"}}
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=300,
+    )
+    text = response.choices[0].message.content.strip()
+    parsed = _parse_gpt_json(text)
+    if parsed:
+        return parsed
+    return {"bias": "NEUTRAL", "confidence": 0, "analysis": f"Parse error: {text[:100]}"}
+
+
