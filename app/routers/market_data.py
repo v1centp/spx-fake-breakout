@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from app.services.firebase import get_firestore
+from app.services import oanda_service
 from datetime import datetime, timezone
 from typing import List
 
@@ -35,3 +36,15 @@ def get_opening_range(day: str, instrument: str = Query("SPX", description="Inst
         return docs[0].to_dict()
 
     return {"message": "Not found"}, 404
+
+
+@router.get("/candles/oanda")
+async def get_oanda_candles(
+    instrument: str = Query(..., description="OANDA instrument, e.g. EUR_USD"),
+    day: str = Query(..., description="Date YYYY-MM-DD"),
+    granularity: str = Query("M5", description="Candle granularity, e.g. M1, M5, M15, H1"),
+):
+    from_time = f"{day}T00:00:00Z"
+    to_time = f"{day}T23:59:59Z"
+    candles = oanda_service.get_candles(instrument, from_time, to_time, granularity)
+    return candles
