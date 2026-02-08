@@ -6,6 +6,7 @@ from app.services.firebase import get_firestore
 from app.services import oanda_service
 from app.services.log_service import log_to_firestore, log_trade_event
 from app.config.universe import UNIVERSE
+from app.config.instrument_map import INSTRUMENT_MAP
 
 POLL_INTERVAL = 30  # seconds
 
@@ -13,6 +14,9 @@ _open_trades = []  # list of (doc_ref, oanda_trade_id)
 
 # Reverse mapping: instrument -> session config
 INSTRUMENT_SESSION = {cfg["instrument"]: cfg["session"] for cfg in UNIVERSE.values()}
+
+# Forex instruments (from instrument_map)
+FOREX_INSTRUMENTS = {cfg["oanda"] for cfg in INSTRUMENT_MAP.values()}
 
 
 def _load_open_trades():
@@ -48,10 +52,21 @@ def _should_auto_close(instrument: str) -> bool:
     return now_local >= trade_end - timedelta(minutes=5)
 
 
+def _should_close_before_weekend(instrument: str) -> bool:
+    """Return True if it's Friday after 20:55 UTC and instrument is forex."""
+    if instrument not in FOREX_INSTRUMENTS:
+        return False
+    now_utc = datetime.now(timezone.utc)
+    # Friday = 4, close at 20:55 UTC (5 min before market close)
+    return now_utc.weekday() == 4 and now_utc.hour >= 20 and now_utc.minute >= 55
+
+
 def _auto_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict) -> bool:
-    """Close a trade near session end. Returns True if closed."""
+    """Close a trade near session end or before weekend for forex. Returns True if closed."""
     instrument = trade_data.get("instrument")
-    if not instrument or not _should_auto_close(instrument):
+    if not instrument:
+        return False
+    if not _should_auto_close(instrument) and not _should_close_before_weekend(instrument):
         return False
 
     try:

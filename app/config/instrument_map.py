@@ -6,7 +6,7 @@ INSTRUMENT_MAP = {
         "decimals": 5,
         "step": 1,          # forex = unites entieres
         "base_currency": "CHF",
-        "tp_ratio": 2.0,
+        "tp_ratio": 3.0,
         "sl_buffer": 0.00030,  # 3 pips de buffer au-dela du Kijun
     },
     # Extensible : ajouter d'autres paires ici

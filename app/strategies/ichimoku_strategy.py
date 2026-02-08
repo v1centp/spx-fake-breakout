@@ -90,6 +90,18 @@ def process_webhook_signal(body: dict) -> dict:
         (direction == "SHORT" and macro_bias == "BEARISH")
     )
     if not bias_aligned and macro_bias != "NEUTRAL":
+        # Logger le rejet GPT dans Firestore pour analyse
+        db.collection("strategies").document(STRATEGY_KEY).collection("gpt_rejections").add({
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "instrument": oanda_instrument,
+            "signal_direction": direction,
+            "gpt_bias": macro_bias,
+            "gpt_confidence": macro_result.get("confidence"),
+            "gpt_analysis": macro_result.get("analysis"),
+            "ichimoku_reasons": rb_result["reasons"],
+            "signal_data": signal,
+        })
         return {
             "status": "REJECT",
             "reason": f"Macro bias ({macro_bias}) oppose au signal ({direction})",
