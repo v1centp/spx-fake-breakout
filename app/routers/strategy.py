@@ -19,11 +19,8 @@ async def toggle_strategy(request: Request):
     doc = ref.get()
     data = doc.to_dict() or {}
 
-    current = data.get(strategy_name)
-    if current is None:
-        return {"error": "Stratégie inconnue dans Firestore."}
-
-    ref.update({strategy_name: not current})
+    current = data.get(strategy_name, False)
+    ref.set({strategy_name: not current}, merge=True)
     return {strategy_name: not current}
 
 @router.get("/config/risk")
