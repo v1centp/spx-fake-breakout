@@ -23,7 +23,13 @@ DECIMALS_BY_INSTRUMENT = {
     "EUR_USD": 5,
     "USD_JPY": 3,
     "USD_CHF": 5,
-    # ajouter d'autres instruments si nécessaire
+    "GBP_USD": 5,
+    "EUR_GBP": 5,
+    "EUR_JPY": 3,
+    "GBP_JPY": 3,
+    "AUD_USD": 5,
+    "NZD_USD": 5,
+    "USD_CAD": 5,
 }
 
 def format_price(price: float, instrument: str) -> str:

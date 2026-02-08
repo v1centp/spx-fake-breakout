@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers import balance, positions, strategy, market_data, logs, trades, webhook
 from app.services.polygon_ws import start_polygon_ws
 from app.services import trade_tracker
+from app.services import news_scheduler
 import threading
 
 
@@ -38,3 +39,4 @@ def startup_event():
     thread = threading.Thread(target=start_polygon_ws, daemon=True)
     thread.start()
     trade_tracker.start()
+    news_scheduler.start()

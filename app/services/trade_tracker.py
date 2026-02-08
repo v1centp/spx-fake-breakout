@@ -103,6 +103,43 @@ def _auto_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict) -> bool:
         return False
 
 
+def _force_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict, reason: str) -> bool:
+    """Force close a trade (e.g. max hold time expired). Returns True if closed."""
+    try:
+        response = oanda_service.close_trade(oanda_trade_id)
+        realized_pl = 0.0
+        try:
+            fill_tx = response.get("orderFillTransaction", {})
+            realized_pl = float(fill_tx.get("pl", 0))
+        except Exception:
+            pass
+
+        doc_ref.update({
+            "outcome": reason,
+            "realized_pnl": realized_pl,
+            "close_time": datetime.now().isoformat(),
+        })
+
+        instrument = trade_data.get("instrument", "unknown")
+        log_trade_event(doc_ref, "FORCE_CLOSED", f"Trade force-closed: {reason} (PnL: {realized_pl})", {
+            "outcome": reason,
+            "realized_pnl": realized_pl,
+            "instrument": instrument,
+        })
+
+        log_to_firestore(
+            f"[TradeTracker] Trade {oanda_trade_id} force-closed ({reason}): PnL={realized_pl}",
+            level="TRADING"
+        )
+        return True
+    except Exception as e:
+        log_to_firestore(
+            f"[TradeTracker] Force-close error on trade {oanda_trade_id}: {e}",
+            level="ERROR"
+        )
+        return False
+
+
 def _check_breakeven(doc_ref, oanda_trade_id: str):
     """Move SL to breakeven (fill_price) when trade reaches +1R profit."""
     try:
@@ -209,6 +246,14 @@ def _poll_loop():
                     trade_data = doc_ref.get().to_dict() or {}
                     if _auto_close_trade(doc_ref, oanda_trade_id, trade_data):
                         continue
+
+                    # --- Max hold time (news trading) ---
+                    max_hold = trade_data.get("max_hold_until")
+                    if max_hold:
+                        max_hold_dt = datetime.fromisoformat(max_hold)
+                        if datetime.now(timezone.utc) >= max_hold_dt:
+                            _force_close_trade(doc_ref, oanda_trade_id, trade_data, "max_hold_expired")
+                            continue
 
                     # --- Breakeven logic at +1R ---
                     _check_breakeven(doc_ref, oanda_trade_id)

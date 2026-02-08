@@ -9,7 +9,60 @@ INSTRUMENT_MAP = {
         "tp_ratio": 3.0,
         "sl_buffer": 0.00030,  # 3 pips de buffer au-dela du Kijun
     },
-    # Extensible : ajouter d'autres paires ici
+    "OANDA:EURUSD": {
+        "oanda": "EUR_USD",
+        "decimals": 5,
+        "step": 1,
+        "base_currency": "USD",
+    },
+    "OANDA:USDJPY": {
+        "oanda": "USD_JPY",
+        "decimals": 3,
+        "step": 1,
+        "base_currency": "JPY",
+    },
+    "OANDA:GBPUSD": {
+        "oanda": "GBP_USD",
+        "decimals": 5,
+        "step": 1,
+        "base_currency": "USD",
+    },
+    "OANDA:EURGBP": {
+        "oanda": "EUR_GBP",
+        "decimals": 5,
+        "step": 1,
+        "base_currency": "GBP",
+    },
+    "OANDA:EURJPY": {
+        "oanda": "EUR_JPY",
+        "decimals": 3,
+        "step": 1,
+        "base_currency": "JPY",
+    },
+    "OANDA:GBPJPY": {
+        "oanda": "GBP_JPY",
+        "decimals": 3,
+        "step": 1,
+        "base_currency": "JPY",
+    },
+    "OANDA:AUDUSD": {
+        "oanda": "AUD_USD",
+        "decimals": 5,
+        "step": 1,
+        "base_currency": "USD",
+    },
+    "OANDA:NZDUSD": {
+        "oanda": "NZD_USD",
+        "decimals": 5,
+        "step": 1,
+        "base_currency": "USD",
+    },
+    "OANDA:USDCAD": {
+        "oanda": "USD_CAD",
+        "decimals": 5,
+        "step": 1,
+        "base_currency": "CAD",
+    },
 }
 
 
