@@ -141,7 +141,7 @@ def _force_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict, reason: s
 
 
 def _check_breakeven(doc_ref, oanda_trade_id: str):
-    """Move SL to breakeven (fill_price) when trade reaches +1R profit."""
+    """Move SL to breakeven (fill_price) when trade reaches +0.5R profit."""
     try:
         trade_data = doc_ref.get().to_dict()
         if not trade_data:
@@ -171,7 +171,7 @@ def _check_breakeven(doc_ref, oanda_trade_id: str):
         else:
             profit = fill_price - current_price
 
-        if profit >= risk:
+        if profit >= risk * 0.5:
             oanda_service.modify_trade_sl(oanda_trade_id, fill_price, instrument)
             doc_ref.update({
                 "breakeven_applied": True,
