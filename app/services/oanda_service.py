@@ -129,3 +129,25 @@ def list_instruments():
         }
         for inst in raw
     ]
+
+def get_trade_details(trade_id: str):
+    url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/trades/{trade_id}"
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    trade = response.json()["trade"]
+    return {
+        "id": trade["id"],
+        "instrument": trade["instrument"],
+        "state": trade["state"],
+        "realizedPL": trade.get("realizedPL", "0"),
+        "unrealizedPL": trade.get("unrealizedPL", "0"),
+        "price": trade.get("price", "0"),
+        "currentUnits": trade.get("currentUnits", "0"),
+    }
+
+def get_closed_trades(count: int = 50):
+    url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/trades"
+    params = {"state": "CLOSED", "count": count}
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    return response.json().get("trades", [])

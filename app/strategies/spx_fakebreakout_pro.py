@@ -93,7 +93,7 @@ def process(candle):
         return
 
     try:
-        entry = get_entry_price()
+        entry = get_entry_price("SPX500_USD")
         log_to_firestore(f"💵 [{STRATEGY_KEY}] Prix OANDA reçu : {entry}", level="OANDA")
     except Exception as e:
         log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur récupération prix OANDA : {e}", level="ERROR")
@@ -116,8 +116,8 @@ def process(candle):
         return
 
     try:
-        executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
-        log_to_firestore(f"✅ [{STRATEGY_KEY}] Trade {direction} exécuté ({executed_units} unités)", level="TRADING")
+        result = execute_trade("SPX500_USD", entry, sl_price, tp_price, units, direction)
+        log_to_firestore(f"✅ [{STRATEGY_KEY}] Trade {direction} exécuté ({result['units']} unités)", level="TRADING")
     except Exception as e:
         log_to_firestore(f"⚠️ [{STRATEGY_KEY}] Erreur exécution : {e}", level="ERROR")
         return
@@ -128,10 +128,12 @@ def process(candle):
         "sl": sl_price,
         "tp": tp_price,
         "direction": direction,
-        "units": executed_units,
+        "units": result["units"],
         "timestamp": datetime.now().isoformat(),
         "source_candle_id": candle_id,
-        "outcome": "unknown"
+        "outcome": "open",
+        "oanda_trade_id": result.get("oanda_trade_id"),
+        "fill_price": result.get("fill_price"),
     })
 
     log_to_firestore(f"🚀 [{STRATEGY_KEY}] Fake breakout exécuté à {entry} (SL: {sl_price}, TP: {tp_price})", level="TRADING")

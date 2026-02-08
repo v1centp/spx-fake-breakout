@@ -28,7 +28,11 @@ def get_all_trades():
             "units": data.get("units"),
             "timestamp": data.get("timestamp"),
             "outcome": data.get("outcome", "unknown"),
-            "meta": data.get("meta", {})
+            "meta": data.get("meta", {}),
+            "oanda_trade_id": data.get("oanda_trade_id"),
+            "fill_price": data.get("fill_price"),
+            "realized_pnl": data.get("realized_pnl"),
+            "close_time": data.get("close_time"),
         })
 
     all_trades = classic_trades + executions

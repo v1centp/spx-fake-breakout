@@ -117,7 +117,7 @@ def process(candle):
         tp_ref = float(decision["tp_ref"])
         justification = decision.get("justification", "")
 
-        entry = get_entry_price()
+        entry = get_entry_price("SPX500_USD")
         spread_factor = entry / candle["c"]
         sl_price = sl_ref * spread_factor
         tp_price = tp_ref * spread_factor
@@ -147,8 +147,8 @@ def process(candle):
                 log_to_firestore(f"[{STRATEGY_KEY}] Même direction que précédent, ignoré", level="NO_TRADING")
                 return
 
-        executed_units = execute_trade(entry, sl_price, tp_price, units, direction)
-        log_to_firestore(f"[{STRATEGY_KEY}] Trade {direction} exécuté ({executed_units} unités)", level="TRADING")
+        result = execute_trade("SPX500_USD", entry, sl_price, tp_price, units, direction)
+        log_to_firestore(f"[{STRATEGY_KEY}] Trade {direction} exécuté ({result['units']} unités)", level="TRADING")
 
         trades_ref.document(str(uuid.uuid4())).set({
             "strategy": STRATEGY_KEY,
@@ -156,7 +156,7 @@ def process(candle):
             "sl": sl_price,
             "tp": tp_price,
             "direction": direction,
-            "units": executed_units,
+            "units": result["units"],
             "timestamp": datetime.now().isoformat(),
             "meta": {
                 "justification": justification,
@@ -165,7 +165,9 @@ def process(candle):
                 "tp_ref": tp_ref
             },
             "source_candle_id": candle_id,
-            "outcome": "unknown"
+            "outcome": "open",
+            "oanda_trade_id": result.get("oanda_trade_id"),
+            "fill_price": result.get("fill_price"),
         })
 
     except Exception as e:

@@ -133,8 +133,8 @@ def process(candle: dict):
 
     # Exécution
     try:
-        executed_units = execute_trade(instrument, entry, sl_price, tp_price, units, direction)
-        log_to_firestore(f"✅ [{STRATEGY_KEY}::{sym}] Ordre {direction} exécuté ({executed_units})", level="TRADING")
+        result = execute_trade(instrument, entry, sl_price, tp_price, units, direction)
+        log_to_firestore(f"✅ [{STRATEGY_KEY}::{sym}] Ordre {direction} exécuté ({result['units']})", level="TRADING")
     except Exception as e:
         log_to_firestore(f"⚠️ [{STRATEGY_KEY}::{sym}] Erreur exécution : {e}", level="ERROR")
         return
@@ -149,10 +149,12 @@ def process(candle: dict):
         "sl": sl_price,
         "tp": tp_price,
         "direction": direction,
-        "units": executed_units,
+        "units": result["units"],
         "timestamp": datetime.now().isoformat(),
         "source_candle_id": candle_id,
-        "outcome": "unknown",
+        "outcome": "open",
+        "oanda_trade_id": result.get("oanda_trade_id"),
+        "fill_price": result.get("fill_price"),
     })
 
     log_to_firestore(
