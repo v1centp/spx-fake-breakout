@@ -1,20 +1,27 @@
 # app/services/news_data_service.py
+import os
 import re
 import time
 import requests
-from bs4 import BeautifulSoup
 from app.services.log_service import log_to_firestore
 
 _cache = {}
 CACHE_TTL = 30  # seconds
 
-INVESTING_CALENDAR_URL = "https://www.investing.com/economic-calendar/"
+TE_API_URL = "https://api.tradingeconomics.com/calendar"
+TE_API_KEY = os.getenv("TRADINGECONOMICS_API_KEY", "guest:guest")
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
+# TradingEconomics country names -> ForexFactory currency codes
+TE_COUNTRY_TO_CURRENCY = {
+    "united states": "USD",
+    "euro area": "EUR",
+    "united kingdom": "GBP",
+    "japan": "JPY",
+    "switzerland": "CHF",
+    "canada": "CAD",
+    "australia": "AUD",
+    "new zealand": "NZD",
+    "china": "CNY",
 }
 
 
@@ -69,7 +76,6 @@ def calculate_surprise(actual: float, forecast: float) -> dict:
 
     # Magnitude based on % deviation from forecast
     if forecast == 0:
-        # Avoid division by zero — use absolute diff thresholds
         abs_diff = abs(diff)
         if abs_diff < 0.1:
             magnitude = "SMALL"
@@ -96,14 +102,14 @@ def calculate_surprise(actual: float, forecast: float) -> dict:
     }
 
 
-def scrape_actual_value(event_title: str, country: str, event_date: str) -> dict:
+def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
     """
-    Scrape Investing.com economic calendar for the actual value of a specific event.
+    Fetch actual value from TradingEconomics API for a specific event.
 
     Args:
         event_title: e.g. "Nonfarm Payrolls", "CPI m/m"
         country: e.g. "USD", "EUR"
-        event_date: e.g. "2025-01-10"
+        event_date: e.g. "2026-02-07"
 
     Returns:
         {actual, forecast, previous, success}
@@ -117,41 +123,33 @@ def scrape_actual_value(event_title: str, country: str, event_date: str) -> dict
             return cached["data"]
 
     try:
-        resp = requests.get(INVESTING_CALENDAR_URL, headers=HEADERS, timeout=15)
+        resp = requests.get(TE_API_URL, params={
+            "c": TE_API_KEY,
+            "f": "json",
+            "importance": 3,
+            "d1": event_date,
+            "d2": event_date,
+        }, timeout=15)
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html5lib")
+        events = resp.json()
 
-        # Investing.com calendar uses a table with rows per event
-        rows = soup.select("tr.js-event-item")
+        for ev in events:
+            ev_title = ev.get("Event", "")
+            ev_country = ev.get("Country", "").lower()
+            ev_currency = TE_COUNTRY_TO_CURRENCY.get(ev_country, "")
 
-        for row in rows:
-            title_el = row.select_one("td.event a")
-            if not title_el:
+            # Match by title and currency
+            if not _fuzzy_match(event_title, ev_title):
                 continue
-            row_title = title_el.get_text(strip=True)
-
-            # Fuzzy match on event title
-            if not _fuzzy_match(event_title, row_title):
+            if country and ev_currency != country.upper():
                 continue
 
-            # Check country via flag class
-            flag_el = row.select_one("td.flagCur span")
-            if flag_el:
-                row_country = flag_el.get("title", "").strip()
-            else:
-                row_country = ""
+            actual_raw = str(ev.get("Actual", "")).strip()
+            forecast_raw = str(ev.get("Forecast", "")).strip()
+            previous_raw = str(ev.get("Previous", "")).strip()
 
-            # Extract values
-            actual_el = row.select_one("td.act")
-            forecast_el = row.select_one("td.fore")
-            previous_el = row.select_one("td.prev")
-
-            actual_raw = actual_el.get_text(strip=True) if actual_el else ""
-            forecast_raw = forecast_el.get_text(strip=True) if forecast_el else ""
-            previous_raw = previous_el.get_text(strip=True) if previous_el else ""
-
-            # Skip if no actual value published yet
-            if not actual_raw or actual_raw == "\xa0":
+            # Skip if no actual value yet
+            if not actual_raw or actual_raw in ("", "None"):
                 continue
 
             result = {
@@ -161,12 +159,14 @@ def scrape_actual_value(event_title: str, country: str, event_date: str) -> dict
                 "actual_raw": actual_raw,
                 "forecast_raw": forecast_raw,
                 "previous_raw": previous_raw,
+                "te_event": ev_title,
+                "te_country": ev.get("Country"),
                 "success": True,
             }
 
             _cache[cache_key] = {"data": result, "ts": now}
             log_to_firestore(
-                f"[NewsData] Scraped {event_title}: actual={actual_raw}, forecast={forecast_raw}",
+                f"[NewsData] Fetched {event_title}: actual={actual_raw}, forecast={forecast_raw}",
                 level="INFO"
             )
             return result
@@ -177,7 +177,7 @@ def scrape_actual_value(event_title: str, country: str, event_date: str) -> dict
         return result
 
     except Exception as e:
-        log_to_firestore(f"[NewsData] Scrape error for {event_title}: {e}", level="ERROR")
+        log_to_firestore(f"[NewsData] API error for {event_title}: {e}", level="ERROR")
         return {"actual": None, "forecast": None, "previous": None, "success": False}
 
 

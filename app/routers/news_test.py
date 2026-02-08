@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Request
 from datetime import datetime, timezone
 from app.services.log_service import log_to_firestore
-from app.services.news_data_service import scrape_actual_value, calculate_surprise, parse_numeric_value
+from app.services.news_data_service import fetch_actual_value, calculate_surprise, parse_numeric_value
 from app.services.news_analyzer import pre_release_analysis, post_release_decision
 from app.services.calendar_service import get_all_upcoming_events
 from app.services import news_scheduler
@@ -69,7 +69,7 @@ async def test_news_pipeline(request: Request):
         }
     else:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        scraped = scrape_actual_value(event_title, country, today)
+        scraped = fetch_actual_value(event_title, country, today)
         actual = scraped.get("actual")
         forecast = scraped.get("forecast") or parse_numeric_value(forecast_raw)
 

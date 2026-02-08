@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.services.calendar_service import _fetch_calendar, _parse_event_datetime
-from app.services.news_data_service import scrape_actual_value, calculate_surprise
+from app.services.news_data_service import fetch_actual_value, calculate_surprise
 from app.services.news_analyzer import pre_release_analysis, post_release_decision
 from app.services.calendar_service import get_all_upcoming_events
 from app.services.log_service import log_to_firestore
@@ -111,7 +111,7 @@ def _job_scrape_actual(event_id: str):
     )
 
     try:
-        scraped = scrape_actual_value(event["title"], event["country"], today)
+        scraped = fetch_actual_value(event["title"], event["country"], today)
         state["scraped"] = scraped
 
         if scraped["success"] and scraped["actual"] is not None:
