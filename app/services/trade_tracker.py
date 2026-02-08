@@ -15,14 +15,7 @@ def _load_open_trades():
     db = get_firestore()
     trades = []
 
-    # Classic strategies: collection_group("trades")
     for doc in db.collection_group("trades").where("outcome", "==", "open").stream():
-        oanda_id = doc.to_dict().get("oanda_trade_id")
-        if oanda_id:
-            trades.append((doc.reference, oanda_id))
-
-    # GPT trader: collection_group("executions")
-    for doc in db.collection_group("executions").where("outcome", "==", "open").stream():
         oanda_id = doc.to_dict().get("oanda_trade_id")
         if oanda_id:
             trades.append((doc.reference, oanda_id))
