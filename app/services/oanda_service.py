@@ -145,7 +145,7 @@ def get_trade_details(trade_id: str):
         "currentUnits": trade.get("currentUnits", "0"),
     }
 
-def get_closed_trades(count: int = 50):
+def get_closed_trades(count: int = 500):
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/trades"
     params = {"state": "CLOSED", "count": count}
     response = requests.get(url, headers=headers, params=params)
