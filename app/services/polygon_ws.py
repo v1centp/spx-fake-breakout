@@ -1,6 +1,6 @@
 # app/services/polygon_ws.py
-from polygon import WebSocketClient
-from polygon.websocket.models import Feed, Market
+from massive import WebSocketClient
+from massive.websocket.models import Feed, Market
 from threading import Thread
 from app.services.firebase import get_firestore
 from datetime import datetime, timezone, timedelta
