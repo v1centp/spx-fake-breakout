@@ -79,17 +79,21 @@ def backfill_outcomes():
             "matched": False,
         })
 
-    # 2. Load all unknown trades from Firestore
-    unknown_docs = []
-    for doc in db.collection_group("trades").where("outcome", "==", "unknown").stream():
-        unknown_docs.append((doc.reference, doc.to_dict()))
-    for doc in db.collection_group("executions").where("outcome", "==", "unknown").stream():
-        unknown_docs.append((doc.reference, doc.to_dict()))
+    # 2. Load ALL trades from Firestore (regardless of current outcome)
+    all_docs = []
+    for doc in db.collection_group("trades").stream():
+        data = doc.to_dict()
+        if data.get("entry") and data.get("direction"):
+            all_docs.append((doc.reference, data))
+    for doc in db.collection_group("executions").stream():
+        data = doc.to_dict()
+        if data.get("entry") and data.get("direction"):
+            all_docs.append((doc.reference, data))
 
     # 3. Match each Firestore trade to an OANDA trade
     matched = 0
     unmatched = 0
-    for doc_ref, data in unknown_docs:
+    for doc_ref, data in all_docs:
         entry = float(data.get("entry", 0))
         direction = data.get("direction", "")
         ts = data.get("timestamp", "")
@@ -147,12 +151,12 @@ def backfill_outcomes():
             unmatched += 1
 
     log_to_firestore(
-        f"[Backfill] Done: {matched} matched, {unmatched} unmatched out of {len(unknown_docs)} unknown trades",
+        f"[Backfill] Done: {matched} matched, {unmatched} unmatched out of {len(all_docs)} trades",
         level="INFO"
     )
     return {
         "matched": matched,
         "unmatched": unmatched,
-        "total_unknown": len(unknown_docs),
+        "total_trades": len(all_docs),
         "oanda_closed_count": len(oanda_closed),
     }
