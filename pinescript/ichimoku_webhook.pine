@@ -1,0 +1,77 @@
+// This Pine Script(R) is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Ichimoku Webhook Strategy - Envoie des signaux JSON au serveur via webhook
+
+//@version=5
+indicator("Ichimoku Webhook", overlay=true)
+
+// ─── INPUTS ───────────────────────────────────────────────
+webhookSecret = input.string("", "Webhook Secret", tooltip="Secret partage avec le serveur")
+tenkanPeriod  = input.int(9,  "Tenkan Period",  minval=1)
+kijunPeriod   = input.int(26, "Kijun Period",   minval=1)
+senkouBPeriod = input.int(52, "Senkou B Period", minval=1)
+displacement  = input.int(26, "Displacement",    minval=1)
+
+// ─── ICHIMOKU CALCULATIONS ────────────────────────────────
+donchian(len) =>
+    avg = math.avg(ta.highest(high, len), ta.lowest(low, len))
+    avg
+
+tenkanSen = donchian(tenkanPeriod)
+kijunSen  = donchian(kijunPeriod)
+
+senkouSpanA = math.avg(tenkanSen, kijunSen)
+senkouSpanB = donchian(senkouBPeriod)
+
+// Valeurs du Kumo a la bougie actuelle (pas projete)
+// Le Kumo projete est decale de +displacement, donc les valeurs actuelles
+// du nuage sont celles calculees il y a `displacement` bougies
+currentSSA = senkouSpanA[displacement]
+currentSSB = senkouSpanB[displacement]
+
+// Chikou Span = close actuel (plotte 26 periodes en arriere)
+// chikou_ref_price = le prix qui etait la il y a 26 periodes
+chikouSpan    = close
+chikouRefPrice = close[displacement]
+
+// ─── PLOT ICHIMOKU ────────────────────────────────────────
+plot(tenkanSen, "Tenkan", color=color.new(color.blue, 0), linewidth=1)
+plot(kijunSen,  "Kijun",  color=color.new(color.red, 0),  linewidth=1)
+
+spanAPlot = plot(senkouSpanA, "Senkou A", offset=displacement, color=color.new(color.green, 80))
+spanBPlot = plot(senkouSpanB, "Senkou B", offset=displacement, color=color.new(color.red, 80))
+fill(spanAPlot, spanBPlot, color=senkouSpanA > senkouSpanB ? color.new(color.green, 90) : color.new(color.red, 90))
+
+plot(chikouSpan, "Chikou", offset=-displacement, color=color.new(color.purple, 0), linewidth=1)
+
+// ─── SIGNAL DETECTION ─────────────────────────────────────
+kumoTop    = math.max(currentSSA, currentSSB)
+kumoBottom = math.min(currentSSA, currentSSB)
+
+// Conditions LONG
+longPriceAboveKumo = close > kumoTop
+longTenkanAboveKijun = tenkanSen > kijunSen
+longChikouConfirm = chikouSpan > chikouRefPrice
+// Trigger : TK cross haussier (Tenkan passe au-dessus de Kijun)
+longTKCross = ta.crossover(tenkanSen, kijunSen)
+
+// Conditions SHORT
+shortPriceBelowKumo = close < kumoBottom
+shortTenkanBelowKijun = tenkanSen < kijunSen
+shortChikouConfirm = chikouSpan < chikouRefPrice
+// Trigger : TK cross baissier (Tenkan passe en-dessous de Kijun)
+shortTKCross = ta.crossunder(tenkanSen, kijunSen)
+
+// Signal complet : TK cross + toutes conditions remplies
+bullishSignal = longTKCross and longPriceAboveKumo and longChikouConfirm
+bearishSignal = shortTKCross and shortPriceBelowKumo and shortChikouConfirm
+
+// ─── VISUAL SIGNALS ───────────────────────────────────────
+plotshape(bullishSignal, "Long Signal",  shape.triangleup,   location.belowbar, color.green, size=size.small)
+plotshape(bearishSignal, "Short Signal", shape.triangledown, location.abovebar, color.red,   size=size.small)
+
+// ─── WEBHOOK ALERTS ───────────────────────────────────────
+if bullishSignal
+    alert('{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","direction":"LONG","close":' + str.tostring(close) + ',"tenkan":' + str.tostring(tenkanSen) + ',"kijun":' + str.tostring(kijunSen) + ',"ssa":' + str.tostring(currentSSA) + ',"ssb":' + str.tostring(currentSSB) + ',"chikou":' + str.tostring(chikouSpan) + ',"chikou_ref_price":' + str.tostring(chikouRefPrice) + '}', alert.freq_once_per_bar)
+
+if bearishSignal
+    alert('{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","direction":"SHORT","close":' + str.tostring(close) + ',"tenkan":' + str.tostring(tenkanSen) + ',"kijun":' + str.tostring(kijunSen) + ',"ssa":' + str.tostring(currentSSA) + ',"ssb":' + str.tostring(currentSSB) + ',"chikou":' + str.tostring(chikouSpan) + ',"chikou_ref_price":' + str.tostring(chikouRefPrice) + '}', alert.freq_once_per_bar)

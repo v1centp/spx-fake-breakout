@@ -22,6 +22,7 @@ DECIMALS_BY_INSTRUMENT = {
     "US30_USD": 1,
     "EUR_USD": 5,
     "USD_JPY": 3,
+    "USD_CHF": 5,
     # ajouter d'autres instruments si nécessaire
 }
 
@@ -111,7 +112,8 @@ def get_latest_price(instrument: str) -> float:
     except (KeyError, IndexError, ValueError) as e:
         raise Exception(f"⚠️ Extraction bid/ask échouée : {e}")
 
-    return round((bid + ask) / 2, 2)
+    decimals = DECIMALS_BY_INSTRUMENT.get(instrument, 5)
+    return round((bid + ask) / 2, decimals)
 
 # ✅ Lister tous les instruments disponibles sur le compte
 def list_instruments():

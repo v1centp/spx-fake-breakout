@@ -3,7 +3,7 @@ from app.services.firebase import get_firestore
 
 router = APIRouter()
 
-KNOWN_STRATEGIES = ["mean_revert", "trend_follow"]
+KNOWN_STRATEGIES = ["mean_revert", "trend_follow", "ichimoku"]
 
 @router.get("/strategy/all")
 def get_all_strategies():

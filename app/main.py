@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import balance, positions, strategy, market_data, logs, trades
+from app.routers import balance, positions, strategy, market_data, logs, trades, webhook
 from app.services.polygon_ws import start_polygon_ws
 from app.services import trade_tracker
 import threading
@@ -30,6 +30,7 @@ app.include_router(strategy.router, prefix="/api")
 app.include_router(market_data.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")
 app.include_router(trades.router, prefix="/api")
+app.include_router(webhook.router, prefix="/api")
 
 
 @app.on_event("startup")
