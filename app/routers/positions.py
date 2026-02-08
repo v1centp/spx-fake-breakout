@@ -9,6 +9,7 @@ router = APIRouter()
 def get_positions():
     try:
         positions = oanda_service.get_open_positions()
-        return {"positions": positions}
+        trades = oanda_service.get_open_trades()
+        return {"positions": positions, "trades": trades}
     except Exception as e:
         return {"error": str(e)}
