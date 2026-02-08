@@ -305,7 +305,7 @@ def load_and_schedule_today():
             continue
 
         event_id = _make_event_id(event)
-        group_key = f"{instrument}_{event_time.strftime('%H%M')}"
+        group_key = f"{instrument}_{event_time.strftime('%Y%m%d_%H%M')}"
 
         if group_key not in groups:
             groups[group_key] = {
