@@ -3,11 +3,14 @@ from app.services.firebase import get_firestore
 
 router = APIRouter()
 
+KNOWN_STRATEGIES = ["mean_revert", "trend_follow"]
+
 @router.get("/strategy/all")
 def get_all_strategies():
     db = get_firestore()
     doc = db.collection("config").document("strategies").get()
-    return doc.to_dict() or {}
+    data = doc.to_dict() or {}
+    return {name: data.get(name, False) for name in KNOWN_STRATEGIES}
 
 @router.post("/strategy/toggle")
 async def toggle_strategy(request: Request):
