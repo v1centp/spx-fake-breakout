@@ -87,6 +87,23 @@ def get_trade_stats():
     }
 
 
+@router.delete("/trades")
+def delete_trade(path: str = Query(...)):
+    """Delete a trade document and its events subcollection."""
+    try:
+        db = get_firestore()
+        trade_ref = db.document(path)
+
+        # Delete events subcollection first
+        for event_doc in trade_ref.collection("events").stream():
+            event_doc.reference.delete()
+
+        trade_ref.delete()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @router.get("/trades/{oanda_trade_id}/events")
 def get_trade_events(oanda_trade_id: str, path: str = Query(None)):
     try:
