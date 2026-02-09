@@ -20,12 +20,32 @@ def calculate_sl_tp(entry, sl_level, direction, tp_ratio=2.75, decimals=2):
     tp = entry + tp_ratio * risk if direction == "LONG" else entry - tp_ratio * risk
     return round(sl_level, decimals), round(tp, decimals), risk
 
-def compute_position_size(risk_per_unit, risk_limit=50, step=None):
-    """Taille théorique puis **floor** au pas configurable (pour respecter le risque max)."""
+def _get_quote_home_rate(instrument: str) -> float:
+    """Get conversion rate from quote currency to account currency (CHF)."""
+    quote = instrument.split("_")[1]
+    if quote == "CHF":
+        return 1.0
+    try:
+        # Try {quote}_CHF directly (e.g. USD_CHF, GBP_CHF)
+        return oanda_service.get_latest_price(f"{quote}_CHF")
+    except Exception:
+        try:
+            # Try inverse CHF_{quote} (e.g. CHF_JPY -> 1/rate)
+            return 1.0 / oanda_service.get_latest_price(f"CHF_{quote}")
+        except Exception:
+            return 1.0
+
+
+def compute_position_size(risk_per_unit, risk_limit=50, step=None, instrument=None):
+    """Taille théorique puis **floor** au pas configurable (pour respecter le risque max).
+    Si instrument est fourni, convertit le risque de la devise de cotation vers CHF."""
     if step is None:
         step = STEP
     if risk_per_unit <= 0:
         return 0.0
+    if instrument:
+        rate = _get_quote_home_rate(instrument)
+        risk_per_unit = risk_per_unit * rate
     raw = risk_limit / risk_per_unit
     return _floor_step(raw, step)
 

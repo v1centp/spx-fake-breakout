@@ -35,6 +35,12 @@ app.include_router(webhook.router, prefix="/api")
 app.include_router(news_test.router, prefix="/api")
 
 
+@app.get("/api/ws-status")
+def ws_status():
+    from app.services.polygon_ws import get_ws_status
+    return get_ws_status()
+
+
 @app.on_event("startup")
 def startup_event():
     thread = threading.Thread(target=start_polygon_ws, daemon=True)

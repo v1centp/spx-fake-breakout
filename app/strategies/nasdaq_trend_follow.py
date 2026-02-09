@@ -108,8 +108,8 @@ def process(candle: dict):
     # SL = milieu du range
     sl_midpoint = (high_15 + low_15) / 2
 
-    # SL/TP avec 1.5R
-    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_midpoint, direction, tp_ratio=1.5)
+    # SL/TP (TP at 3R for scaling-out: 50% at 1R, 25% at 2R, 25% at 3R)
+    sl_price, tp_price, risk_per_unit = calculate_sl_tp(entry, sl_midpoint, direction, tp_ratio=3.0)
     if not risk_per_unit:
         log_to_firestore(f"[{STRATEGY_KEY}::{sym}] Risque nul.", level="ERROR")
         return
@@ -145,6 +145,10 @@ def process(candle: dict):
         "oanda_trade_id": result.get("oanda_trade_id"),
         "fill_price": result.get("fill_price"),
         "breakeven_applied": False,
+        "scaling_step": 0,
+        "initial_units": abs(result["units"]),
+        "risk_r": risk_per_unit,
+        "step": 0.1,
     })
 
     log_trade_event(trade_ref, "OPENED", f"Trade {direction} ouvert sur {instrument}", {

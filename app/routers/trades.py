@@ -1,5 +1,4 @@
-from fastapi import APIRouter
-from google.cloud.firestore_v1 import FieldFilter
+from fastapi import APIRouter, Query
 from app.services.firebase import get_firestore
 
 router = APIRouter()
@@ -14,7 +13,7 @@ def get_all_trades():
         data = doc.to_dict()
         if not data.get("entry"):
             continue
-        trades.append(data | {"id": doc.id})
+        trades.append(data | {"id": doc.id, "doc_path": doc.reference.path})
 
     trades.sort(key=lambda t: t.get("timestamp", ""), reverse=True)
     return trades
@@ -39,9 +38,22 @@ def get_trade_stats():
     for strat, data in stats.items():
         trades = data["trades"]
         closed = [t for t in trades if t.get("outcome") not in (None, "open")]
-        wins = [t for t in closed if t.get("outcome") == "win"]
-        losses = [t for t in closed if t.get("outcome") == "loss"]
-        breakevens = [t for t in closed if t.get("outcome") == "breakeven"]
+
+        def _pnl_category(t):
+            outcome = t.get("outcome", "")
+            if outcome in ("win", "loss", "breakeven"):
+                return outcome
+            # auto_closed, max_hold_expired → classify by realized PnL
+            pnl = t.get("realized_pnl", 0) or 0
+            if pnl > 0:
+                return "win"
+            elif pnl < 0:
+                return "loss"
+            return "breakeven"
+
+        wins = [t for t in closed if _pnl_category(t) == "win"]
+        losses = [t for t in closed if _pnl_category(t) == "loss"]
+        breakevens = [t for t in closed if _pnl_category(t) == "breakeven"]
 
         pnls = [t.get("realized_pnl", 0) for t in closed if t.get("realized_pnl") is not None]
         total_pnl = sum(pnls)
@@ -76,23 +88,32 @@ def get_trade_stats():
 
 
 @router.get("/trades/{oanda_trade_id}/events")
-def get_trade_events(oanda_trade_id: str):
-    db = get_firestore()
+def get_trade_events(oanda_trade_id: str, path: str = Query(None)):
+    try:
+        db = get_firestore()
 
-    # Find the trade doc by oanda_trade_id
-    docs = db.collection_group("trades").where(
-        filter=FieldFilter("oanda_trade_id", "==", oanda_trade_id)
-    ).stream()
+        trade_ref = None
 
-    trade_doc = None
-    for doc in docs:
-        if doc.to_dict().get("entry"):
-            trade_doc = doc
-            break
+        # Use direct Firestore path if provided (no index needed)
+        if path:
+            trade_ref = db.document(path)
+        else:
+            # Fallback: search by oanda_trade_id across all trades collections
+            try:
+                docs = db.collection_group("trades").where(
+                    "oanda_trade_id", "==", oanda_trade_id
+                ).stream()
+                for doc in docs:
+                    if doc.to_dict().get("entry"):
+                        trade_ref = doc.reference
+                        break
+            except Exception:
+                pass
 
-    if not trade_doc:
+        if not trade_ref:
+            return []
+
+        events = trade_ref.collection("events").order_by("timestamp").stream()
+        return [e.to_dict() for e in events]
+    except Exception:
         return []
-
-    # Get events subcollection ordered by timestamp
-    events = trade_doc.reference.collection("events").order_by("timestamp").stream()
-    return [e.to_dict() for e in events]

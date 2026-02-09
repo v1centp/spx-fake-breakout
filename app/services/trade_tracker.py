@@ -1,9 +1,11 @@
+import math
 import threading
 import time
 from datetime import datetime, timezone, timedelta
 import pytz
 from app.services.firebase import get_firestore
 from app.services import oanda_service
+from app.services.oanda_service import DECIMALS_BY_INSTRUMENT
 from app.services.log_service import log_to_firestore, log_trade_event
 from app.config.universe import UNIVERSE
 from app.config.instrument_map import INSTRUMENT_MAP
@@ -140,8 +142,16 @@ def _force_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict, reason: s
         return False
 
 
+def _get_be_offset(instrument: str) -> float:
+    """Return a small price offset for breakeven SL, ensuring a tiny locked-in profit."""
+    decimals = DECIMALS_BY_INSTRUMENT.get(instrument, 2)
+    # CFDs (1-2 decimals): 0.1, JPY pairs (3 decimals): 0.01, other forex (5 decimals): 0.0001
+    offsets = {1: 0.1, 2: 0.1, 3: 0.01, 5: 0.0001}
+    return offsets.get(decimals, 10 ** -(decimals))
+
+
 def _check_breakeven(doc_ref, oanda_trade_id: str):
-    """Move SL to breakeven (fill_price) when trade reaches +0.5R profit."""
+    """Move SL to breakeven (fill_price + small offset) when trade reaches +0.5R profit."""
     try:
         trade_data = doc_ref.get().to_dict()
         if not trade_data:
@@ -172,26 +182,121 @@ def _check_breakeven(doc_ref, oanda_trade_id: str):
             profit = fill_price - current_price
 
         if profit >= risk * 0.5:
-            oanda_service.modify_trade_sl(oanda_trade_id, fill_price, instrument)
+            offset = _get_be_offset(instrument)
+            if direction == "LONG":
+                be_price = fill_price + offset
+            else:
+                be_price = fill_price - offset
+
+            oanda_service.modify_trade_sl(oanda_trade_id, be_price, instrument)
             doc_ref.update({
                 "breakeven_applied": True,
                 "sl_original": sl,
-                "sl": fill_price,
+                "sl": be_price,
             })
-            log_trade_event(doc_ref, "BREAKEVEN", f"SL deplace au breakeven: {sl} -> {fill_price}", {
+            log_trade_event(doc_ref, "BREAKEVEN", f"SL deplace au breakeven: {sl} -> {be_price}", {
                 "sl_original": sl,
-                "sl_new": fill_price,
+                "sl_new": be_price,
                 "profit_at_trigger": round(profit, 2),
                 "risk": round(risk, 2),
             })
             log_to_firestore(
                 f"[TradeTracker] Breakeven applied on trade {oanda_trade_id}: "
-                f"SL moved from {sl} to {fill_price} (profit={profit:.2f}, risk={risk:.2f})",
+                f"SL moved from {sl} to {be_price} (profit={profit:.2f}, risk={risk:.2f})",
                 level="TRADING"
             )
     except Exception as e:
         log_to_firestore(
             f"[TradeTracker] Breakeven check error on trade {oanda_trade_id}: {e}",
+            level="ERROR"
+        )
+
+
+def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
+    """Scaling-out for ichimoku: TP1=1R (close 50%), TP2=2R (close 25%), TP3=6R (OANDA TP)."""
+    try:
+        scaling_step = trade_data.get("scaling_step", 0)
+        if scaling_step >= 2:
+            return  # TP1+TP2 done; TP3 (6R) handled by OANDA TP
+
+        fill_price = float(trade_data.get("fill_price", 0))
+        risk_r = float(trade_data.get("risk_r", 0))
+        direction = trade_data.get("direction")
+        instrument = trade_data.get("instrument")
+        initial_units = abs(float(trade_data.get("initial_units", 0)))
+        step = float(trade_data.get("step", 1))
+
+        if not all([fill_price, risk_r, direction, instrument, initial_units]):
+            return
+
+        current_price = oanda_service.get_latest_price(instrument)
+
+        if direction == "LONG":
+            profit = current_price - fill_price
+        else:
+            profit = fill_price - current_price
+
+        profit_r = profit / risk_r if risk_r else 0
+
+        if profit_r >= 1.0 and scaling_step == 0:
+            # TP1: close 50%, SL -> breakeven
+            units_to_close = max(math.floor(initial_units * 0.5 / step) * step, step)
+            oanda_service.close_trade(oanda_trade_id, units=units_to_close)
+
+            offset = _get_be_offset(instrument)
+            be_price = fill_price + offset if direction == "LONG" else fill_price - offset
+            oanda_service.modify_trade_sl(oanda_trade_id, be_price, instrument)
+
+            doc_ref.update({
+                "scaling_step": 1,
+                "sl": be_price,
+                "sl_original": trade_data.get("sl"),
+                "breakeven_applied": True,
+            })
+
+            log_trade_event(doc_ref, "SCALING_TP1",
+                f"TP1 atteint ({profit_r:.1f}R): {units_to_close} units fermees, SL -> {be_price}", {
+                    "units_closed": units_to_close,
+                    "sl_new": be_price,
+                    "profit_r": round(profit_r, 2),
+                })
+            log_to_firestore(
+                f"[TradeTracker] Scaling TP1 on {oanda_trade_id}: "
+                f"closed {units_to_close}/{initial_units} units, SL -> {be_price}",
+                level="TRADING"
+            )
+
+        elif profit_r >= 2.0 and scaling_step == 1:
+            # TP2: close 25% of original, SL -> +1R
+            units_to_close = max(math.floor(initial_units * 0.25 / step) * step, step)
+            oanda_service.close_trade(oanda_trade_id, units=units_to_close)
+
+            if direction == "LONG":
+                new_sl = fill_price + risk_r
+            else:
+                new_sl = fill_price - risk_r
+            oanda_service.modify_trade_sl(oanda_trade_id, new_sl, instrument)
+
+            doc_ref.update({
+                "scaling_step": 2,
+                "sl": new_sl,
+            })
+
+            log_trade_event(doc_ref, "SCALING_TP2",
+                f"TP2 atteint ({profit_r:.1f}R): {units_to_close} units fermees, SL -> {new_sl}", {
+                    "units_closed": units_to_close,
+                    "sl_new": new_sl,
+                    "profit_r": round(profit_r, 2),
+                })
+            log_to_firestore(
+                f"[TradeTracker] Scaling TP2 on {oanda_trade_id}: "
+                f"closed {units_to_close}/{initial_units} units, SL -> {new_sl}",
+                level="TRADING"
+            )
+
+    except Exception as e:
+        log_to_firestore(
+            f"[TradeTracker] Scaling check error on trade {oanda_trade_id}: {e}",
             level="ERROR"
         )
 
@@ -224,7 +329,23 @@ def _poll_loop():
 
                 if details["state"] == "CLOSED":
                     realized_pl = float(details["realizedPL"])
-                    outcome = _determine_outcome(realized_pl)
+                    trade_data = doc_ref.get().to_dict() or {}
+
+                    if trade_data.get("breakeven_applied"):
+                        # If BE was applied, distinguish BE SL hit from TP hit
+                        # using original risk as reference
+                        fill_price = float(trade_data.get("fill_price", 0))
+                        sl_original = float(trade_data.get("sl_original", 0))
+                        units = abs(float(trade_data.get("units", 0)))
+                        risk_distance = abs(fill_price - sl_original)
+                        est_risk_pnl = risk_distance * units if risk_distance and units else 50
+                        # PnL < 25% of 1R => BE SL was hit (not TP)
+                        if realized_pl < est_risk_pnl * 0.25:
+                            outcome = "breakeven"
+                        else:
+                            outcome = _determine_outcome(realized_pl)
+                    else:
+                        outcome = _determine_outcome(realized_pl)
 
                     doc_ref.update({
                         "outcome": outcome,
@@ -232,9 +353,13 @@ def _poll_loop():
                         "close_time": datetime.now().isoformat(),
                     })
 
-                    log_trade_event(doc_ref, "CLOSED", f"Trade cloture: {outcome} (PnL: {realized_pl})", {
+                    log_trade_event(doc_ref, "CLOSED", f"Trade cloture: {outcome} (PnL: {realized_pl:.2f} CHF)", {
                         "outcome": outcome,
-                        "realized_pnl": realized_pl,
+                        "realized_pnl": round(realized_pl, 2),
+                        "instrument": trade_data.get("instrument"),
+                        "direction": trade_data.get("direction"),
+                        "scaling_step": trade_data.get("scaling_step"),
+                        "breakeven_applied": trade_data.get("breakeven_applied"),
                     })
 
                     log_to_firestore(
@@ -255,8 +380,11 @@ def _poll_loop():
                             _force_close_trade(doc_ref, oanda_trade_id, trade_data, "max_hold_expired")
                             continue
 
-                    # --- Breakeven logic at +1R ---
-                    _check_breakeven(doc_ref, oanda_trade_id)
+                    # --- Position management: scaling or breakeven ---
+                    if trade_data.get("scaling_step") is not None:
+                        _check_scaling_out(doc_ref, oanda_trade_id, trade_data)
+                    else:
+                        _check_breakeven(doc_ref, oanda_trade_id)
                     still_open.append((doc_ref, oanda_trade_id))
 
             _open_trades = still_open

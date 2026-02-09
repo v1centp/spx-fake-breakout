@@ -2,6 +2,7 @@
 from massive import WebSocketClient
 from massive.websocket.models import Feed, Market
 from threading import Thread
+import time
 from app.services.firebase import get_firestore
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
@@ -29,6 +30,7 @@ def handle_msg(msgs):
     db = get_firestore()
     for m in msgs:
         try:
+            _ws_status["last_msg"] = datetime.now(timezone.utc).isoformat()
             dt_utc = datetime.fromtimestamp(m.end_timestamp/1000, tz=timezone.utc)
             sym = m.symbol  # <-- garder EXACTEMENT le symbole WS partout
 
@@ -74,16 +76,89 @@ def handle_msg(msgs):
         except Exception as e:
             log_to_firestore(f"⚠️ WS error ({getattr(m,'symbol','?')}) : {e}", level="ERROR")
 
+_ws_status = {"connected": False, "last_msg": None, "reconnects": 0, "market_open": False}
+
+_NY = pytz.timezone("America/New_York")
+MAX_BACKOFF = 60  # seconds
+OFF_HOURS_SLEEP = 300  # 5 min between checks when market is closed
+
+
+def _is_market_open() -> bool:
+    """US indices: Mon-Fri ~09:00-16:05 ET (connect a bit early, linger a bit after close)."""
+    now = datetime.now(timezone.utc).astimezone(_NY)
+    # Weekend
+    if now.weekday() >= 5:
+        return False
+    # Outside 09:00 - 16:05 ET
+    t = now.hour * 60 + now.minute
+    return 9 * 60 <= t <= 16 * 60 + 5
+
+
+def get_ws_status():
+    status = _ws_status.copy()
+    status["market_open"] = _is_market_open()
+    return status
+
+
+def _run_with_reconnect():
+    global _ws_status
+    backoff = 1
+
+    while True:
+        # Wait for market hours before connecting
+        if not _is_market_open():
+            _ws_status["connected"] = False
+            _ws_status["market_open"] = False
+            time.sleep(OFF_HOURS_SLEEP)
+            continue
+
+        _ws_status["market_open"] = True
+
+        try:
+            client = WebSocketClient(api_key=POLYGON_API_KEY, feed=Feed.RealTime, market=Market.Indices)
+
+            symbols = [sym for sym, cfg in UNIVERSE.items() if cfg.get("active")]
+            if not symbols:
+                log_to_firestore("[PolygonWS] Aucun symbole actif dans UNIVERSE", level="ERROR")
+                time.sleep(30)
+                continue
+
+            for sym in symbols:
+                client.subscribe('AM.' + sym)
+
+            _ws_status["connected"] = True
+            log_to_firestore(
+                f"[PolygonWS] Connecte — {len(symbols)} symbole(s): {', '.join(symbols)}",
+                level="INFO"
+            )
+            backoff = 1  # reset on successful connect
+
+            client.run(handle_msg)
+
+            # client.run returned — connection closed
+            _ws_status["connected"] = False
+
+            # If market just closed, don't log as error
+            if not _is_market_open():
+                log_to_firestore("[PolygonWS] Marche ferme, WS deconnecte", level="INFO")
+                continue
+
+            log_to_firestore("[PolygonWS] Connexion fermee, reconnexion...", level="ERROR")
+
+        except Exception as e:
+            _ws_status["connected"] = False
+            _ws_status["reconnects"] += 1
+
+            # Only log errors during market hours
+            if _is_market_open():
+                log_to_firestore(
+                    f"[PolygonWS] Erreur WS: {e} — reconnexion dans {backoff}s (tentative #{_ws_status['reconnects']})",
+                    level="ERROR"
+                )
+
+            time.sleep(backoff)
+            backoff = min(backoff * 2, MAX_BACKOFF)
+
+
 def start_polygon_ws():
-    client = WebSocketClient(api_key=POLYGON_API_KEY, feed=Feed.RealTime, market=Market.Indices)
-
-    # IMPORTANT: les clés de UNIVERSE doivent correspondre EXACTEMENT
-    # aux symboles Polygon WS (ex: "I:SPX", "I:NDX", "I:NQEURO50", ...).
-    symbols = [sym for sym, cfg in UNIVERSE.items() if cfg.get("active")]
-    if not symbols:
-        log_to_firestore("⚠️ Aucun symbole actif dans UNIVERSE", level="ERROR")
-
-    for sym in symbols:
-        client.subscribe('AM.'+sym)
-
-    Thread(target=client.run, args=(handle_msg,), daemon=True).start()
+    Thread(target=_run_with_reconnect, daemon=True).start()

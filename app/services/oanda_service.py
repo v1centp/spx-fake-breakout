@@ -138,9 +138,12 @@ def list_instruments():
         for inst in raw
     ]
 
-def close_trade(trade_id: str):
+def close_trade(trade_id: str, units=None):
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/trades/{trade_id}/close"
-    response = requests.put(url, headers=headers)
+    kwargs = {"headers": headers}
+    if units is not None:
+        kwargs["json"] = {"units": str(abs(float(units)))}
+    response = requests.put(url, **kwargs)
     if not response.ok:
         log_to_firestore(
             f"Erreur OANDA close trade {trade_id}: {response.status_code} — {response.text}",

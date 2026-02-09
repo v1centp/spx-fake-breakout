@@ -138,7 +138,7 @@ def execute_news_trade(
     risk_chf = settings.get("risk_chf", DEFAULT_RISK_CHF)
 
     # Position sizing (step=1 for forex)
-    units = compute_position_size(risk_per_unit, risk_chf, step=1)
+    units = compute_position_size(risk_per_unit, risk_chf, step=1, instrument=instrument)
     if units < 1:
         log_to_firestore(f"[{STRATEGY_KEY}] Position too small ({units})", level="ERROR")
         return {"status": "ERROR", "reason": f"Position too small: {units}"}

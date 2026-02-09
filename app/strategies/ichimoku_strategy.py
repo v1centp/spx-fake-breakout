@@ -154,7 +154,7 @@ def process_webhook_signal(body: dict) -> dict:
     risk_chf = settings.get("risk_chf", DEFAULT_RISK_CHF)
 
     # Position sizing
-    units = compute_position_size(risk_per_unit, risk_chf, step=step)
+    units = compute_position_size(risk_per_unit, risk_chf, step=step, instrument=oanda_instrument)
     if units < step:
         log_to_firestore(f"[{STRATEGY_KEY}] Taille position trop faible ({units})", level="ERROR")
         return {"status": "ERROR", "reason": f"Position too small: {units}"}
@@ -186,6 +186,11 @@ def process_webhook_signal(body: dict) -> dict:
         "outcome": "open",
         "oanda_trade_id": result.get("oanda_trade_id"),
         "fill_price": result.get("fill_price"),
+        "breakeven_applied": False,
+        "scaling_step": 0,
+        "initial_units": abs(result["units"]),
+        "risk_r": risk_per_unit,
+        "step": step,
         "gpt_macro_bias": macro_result.get("bias"),
         "gpt_macro_confidence": macro_result.get("confidence"),
         "gpt_macro_analysis": macro_result.get("analysis"),

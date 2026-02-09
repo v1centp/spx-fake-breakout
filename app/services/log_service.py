@@ -1,5 +1,6 @@
 from app.services.firebase import get_firestore
 from datetime import datetime
+import re
 import requests
 import os
 
@@ -29,6 +30,21 @@ def log_to_slack(message: str, level: str = "INFO"):
     except Exception as e:
         print(f"⚠️ Erreur Slack : {e}")
 
+_TAG_RE = re.compile(r"^\[([^\]]+)\]")
+
+
+def _extract_tag(message: str) -> str | None:
+    """Extract strategy/service tag from log message like '[trend_follow::I:NDX] ...'."""
+    m = _TAG_RE.match(message)
+    if not m:
+        return None
+    tag = m.group(1)
+    # '[mean_revert::I:SPX]' -> 'mean_revert'
+    if "::" in tag:
+        tag = tag.split("::")[0]
+    return tag
+
+
 def log_to_firestore(message: str, level="INFO", extra_data=None):
     # Slack uniquement si c'est un ordre de trading
     # log_to_slack(message, level)
@@ -40,6 +56,9 @@ def log_to_firestore(message: str, level="INFO", extra_data=None):
             "level": level,
             "timestamp": datetime.utcnow().isoformat(),
         }
+        tag = _extract_tag(message)
+        if tag:
+            log_entry["tag"] = tag
         if extra_data:
             log_entry.update(extra_data)
         db.collection("execution_logs").add(log_entry)
