@@ -190,6 +190,7 @@ def process_webhook_signal(body: dict) -> dict:
         "scaling_step": 0,
         "initial_units": abs(result["units"]),
         "risk_r": risk_per_unit,
+        "risk_chf": risk_chf,
         "step": step,
         "gpt_macro_bias": macro_result.get("bias"),
         "gpt_macro_confidence": macro_result.get("confidence"),

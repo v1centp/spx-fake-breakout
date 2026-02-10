@@ -330,17 +330,16 @@ def _poll_loop():
                 if details["state"] == "CLOSED":
                     realized_pl = float(details["realizedPL"])
                     trade_data = doc_ref.get().to_dict() or {}
+                    scaling_step = trade_data.get("scaling_step", 0)
 
-                    if trade_data.get("breakeven_applied"):
-                        # If BE was applied, distinguish BE SL hit from TP hit
-                        # using original risk as reference
-                        fill_price = float(trade_data.get("fill_price", 0))
-                        sl_original = float(trade_data.get("sl_original", 0))
-                        units = abs(float(trade_data.get("units", 0)))
-                        risk_distance = abs(fill_price - sl_original)
-                        est_risk_pnl = risk_distance * units if risk_distance and units else 50
-                        # PnL < 25% of 1R => BE SL was hit (not TP)
-                        if realized_pl < est_risk_pnl * 0.25:
+                    if scaling_step >= 1:
+                        # Scaling already closed units at TP1+: always a win
+                        outcome = "win"
+                    elif trade_data.get("breakeven_applied"):
+                        # Non-scaling BE: small PnL means BE SL was hit
+                        risk_chf = float(trade_data.get("risk_chf", 0))
+                        threshold = risk_chf * 0.25 if risk_chf else 5
+                        if realized_pl < threshold:
                             outcome = "breakeven"
                         else:
                             outcome = _determine_outcome(realized_pl)

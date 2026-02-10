@@ -162,6 +162,7 @@ def process(candle: dict):
         "scaling_step": 0,
         "initial_units": abs(result["units"]),
         "risk_r": risk_per_unit,
+        "risk_chf": risk_chf,
         "step": 0.1,
     })
 
