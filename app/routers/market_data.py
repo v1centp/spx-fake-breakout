@@ -45,6 +45,8 @@ async def get_oanda_candles(
     granularity: str = Query("M5", description="Candle granularity, e.g. M1, M5, M15, H1"),
 ):
     from_time = f"{day}T00:00:00Z"
-    to_time = f"{day}T23:59:59Z"
+    end_of_day = f"{day}T23:59:59Z"
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    to_time = min(end_of_day, now)
     candles = oanda_service.get_candles(instrument, from_time, to_time, granularity)
     return candles
