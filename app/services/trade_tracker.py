@@ -331,28 +331,25 @@ def _poll_loop():
                     realized_pl = float(details["realizedPL"])
                     trade_data = doc_ref.get().to_dict() or {}
                     scaling_step = trade_data.get("scaling_step", 0)
-                    risk_chf = float(trade_data.get("risk_chf", 0)) or 50
+                    tp_filled = details.get("tp_filled", False)
+                    sl_filled = details.get("sl_filled", False)
 
                     if scaling_step >= 2:
-                        # TP1+TP2 done: remaining closed by TP3 or SL +1R
                         outcome = "win"
-                        close_reason = "TP3" if realized_pl > risk_chf * 1.75 else "SL +1R (après TP2)"
+                        close_reason = "TP3" if tp_filled else "SL +1R (après TP2)"
                     elif scaling_step == 1:
-                        # TP1 done: remaining closed by BE SL
                         outcome = "win"
-                        close_reason = "BE SL (après TP1)"
+                        close_reason = "TP (après TP1)" if tp_filled else "BE SL (après TP1)"
                     elif trade_data.get("breakeven_applied"):
-                        # Non-scaling BE: small PnL means BE SL was hit
-                        threshold = risk_chf * 0.25
-                        if realized_pl < threshold:
+                        if sl_filled:
                             outcome = "breakeven"
                             close_reason = "BE SL"
                         else:
                             outcome = _determine_outcome(realized_pl)
-                            close_reason = "TP" if realized_pl > 0 else "SL"
+                            close_reason = "TP" if tp_filled else "SL"
                     else:
                         outcome = _determine_outcome(realized_pl)
-                        close_reason = "TP" if realized_pl > 0 else "SL"
+                        close_reason = "TP" if tp_filled else "SL" if sl_filled else "close"
 
                     doc_ref.update({
                         "outcome": outcome,

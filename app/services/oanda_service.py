@@ -171,6 +171,8 @@ def get_trade_details(trade_id: str):
     response = requests.get(url, headers=headers)
     response.raise_for_status()
     trade = response.json()["trade"]
+    sl_order = trade.get("stopLossOrder", {})
+    tp_order = trade.get("takeProfitOrder", {})
     return {
         "id": trade["id"],
         "instrument": trade["instrument"],
@@ -179,6 +181,8 @@ def get_trade_details(trade_id: str):
         "unrealizedPL": trade.get("unrealizedPL", "0"),
         "price": trade.get("price", "0"),
         "currentUnits": trade.get("currentUnits", "0"),
+        "sl_filled": sl_order.get("state") == "FILLED",
+        "tp_filled": tp_order.get("state") == "FILLED",
     }
 
 def get_closed_trades(count: int = 500):
