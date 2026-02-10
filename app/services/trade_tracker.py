@@ -331,38 +331,48 @@ def _poll_loop():
                     realized_pl = float(details["realizedPL"])
                     trade_data = doc_ref.get().to_dict() or {}
                     scaling_step = trade_data.get("scaling_step", 0)
+                    risk_chf = float(trade_data.get("risk_chf", 0)) or 50
 
-                    if scaling_step >= 1:
-                        # Scaling already closed units at TP1+: always a win
+                    if scaling_step >= 2:
+                        # TP1+TP2 done: remaining closed by TP3 or SL +1R
                         outcome = "win"
+                        close_reason = "TP3" if realized_pl > risk_chf * 1.75 else "SL +1R (après TP2)"
+                    elif scaling_step == 1:
+                        # TP1 done: remaining closed by BE SL
+                        outcome = "win"
+                        close_reason = "BE SL (après TP1)"
                     elif trade_data.get("breakeven_applied"):
                         # Non-scaling BE: small PnL means BE SL was hit
-                        risk_chf = float(trade_data.get("risk_chf", 0))
-                        threshold = risk_chf * 0.25 if risk_chf else 5
+                        threshold = risk_chf * 0.25
                         if realized_pl < threshold:
                             outcome = "breakeven"
+                            close_reason = "BE SL"
                         else:
                             outcome = _determine_outcome(realized_pl)
+                            close_reason = "TP" if realized_pl > 0 else "SL"
                     else:
                         outcome = _determine_outcome(realized_pl)
+                        close_reason = "TP" if realized_pl > 0 else "SL"
 
                     doc_ref.update({
                         "outcome": outcome,
+                        "close_reason": close_reason,
                         "realized_pnl": realized_pl,
                         "close_time": datetime.now().isoformat(),
                     })
 
-                    log_trade_event(doc_ref, "CLOSED", f"Trade cloture: {outcome} (PnL: {realized_pl:.2f} CHF)", {
+                    log_trade_event(doc_ref, "CLOSED", f"Trade cloturé: {close_reason} — {outcome} (PnL: {realized_pl:.2f} CHF)", {
                         "outcome": outcome,
+                        "close_reason": close_reason,
                         "realized_pnl": round(realized_pl, 2),
                         "instrument": trade_data.get("instrument"),
                         "direction": trade_data.get("direction"),
-                        "scaling_step": trade_data.get("scaling_step"),
+                        "scaling_step": scaling_step,
                         "breakeven_applied": trade_data.get("breakeven_applied"),
                     })
 
                     log_to_firestore(
-                        f"[TradeTracker] Trade {oanda_trade_id} closed: {outcome} (PnL: {realized_pl})",
+                        f"[TradeTracker] Trade {oanda_trade_id} closed: {close_reason} — {outcome} (PnL: {realized_pl:.2f})",
                         level="TRADING"
                     )
                 else:
