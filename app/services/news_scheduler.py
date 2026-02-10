@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.services.calendar_service import _fetch_calendar, _parse_event_datetime
-from app.services.news_data_service import fetch_actual_value, calculate_surprise, parse_numeric_value
+from app.services.news_data_service import fetch_actual_value, calculate_surprise, parse_numeric_value, get_day_cache
 from app.services.news_analyzer import pre_release_analysis, post_release_decision
 from app.services.calendar_service import get_all_upcoming_events
 from app.services.log_service import log_to_firestore
@@ -16,8 +16,8 @@ NEWS_TRADING_CONFIG = {
     "tp_ratio": 2.0,
     "max_hold_minutes": 30,
     "pre_analysis_offset_seconds": -120,   # T-2min
-    "scrape_offset_seconds": 30,           # T+30s
-    "trade_decision_offset_seconds": 120,  # T+2min
+    "scrape_offset_seconds": 90,           # T+90s (TE needs time to publish)
+    "trade_decision_offset_seconds": 180,  # T+3min (retry scrape if needed)
 }
 
 # Which instruments to trade for each currency
@@ -200,12 +200,24 @@ def _job_trade_decision(group_id: str):
     best_idx = state.get("best_event_idx")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+    # Retry scrape if initial attempt failed (T+30s may have been too early)
     if best_idx is None:
         log_to_firestore(
-            f"[NewsScheduler] No valid surprise data for {group_id}, skipping",
+            f"[NewsScheduler] No surprise data at decision time for {group_id}, retrying scrape...",
             level="INFO"
         )
-        _log_decision_to_firestore(group_id, today, "SKIP", "No valid surprise data", state)
+        # Invalidate day cache to force fresh API call
+        if today in get_day_cache():
+            del get_day_cache()[today]
+        _job_scrape_actual(group_id)
+        best_idx = state.get("best_event_idx")
+
+    if best_idx is None:
+        log_to_firestore(
+            f"[NewsScheduler] No valid surprise data for {group_id} after retry, skipping",
+            level="INFO"
+        )
+        _log_decision_to_firestore(group_id, today, "SKIP", "No valid surprise data (after retry)", state)
         return
 
     best = state["events"][best_idx]

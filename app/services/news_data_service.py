@@ -11,6 +11,11 @@ CACHE_TTL = 30  # seconds
 _day_cache = {}  # key: event_date -> {events: [...], ts: ...}
 DAY_CACHE_TTL = 300  # 5 minutes — avoids redundant API calls for same-day events
 
+
+def get_day_cache():
+    """Return a reference to the day cache (for invalidation from outside)."""
+    return _day_cache
+
 TE_API_URL = "https://api.tradingeconomics.com/calendar"
 TE_API_KEY = os.getenv("TRADINGECONOMICS_API_KEY", "guest:guest")
 
