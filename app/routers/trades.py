@@ -15,6 +15,29 @@ def get_all_trades():
             continue
         trades.append(data | {"id": doc.id, "doc_path": doc.reference.path})
 
+    # Include GPT rejections
+    rejections_snap = (
+        db.collection("strategies").document("ichimoku")
+          .collection("gpt_rejections").stream()
+    )
+    for doc in rejections_snap:
+        data = doc.to_dict()
+        trades.append({
+            "id": doc.id,
+            "doc_path": doc.reference.path,
+            "strategy": "ichimoku",
+            "instrument": data.get("instrument"),
+            "direction": data.get("signal_direction"),
+            "timestamp": data.get("timestamp"),
+            "date": data.get("date"),
+            "outcome": "rejected",
+            "gpt_bias": data.get("gpt_bias"),
+            "gpt_confidence": data.get("gpt_confidence"),
+            "gpt_analysis": data.get("gpt_analysis"),
+            "ichimoku_reasons": data.get("ichimoku_reasons"),
+            "signal_data": data.get("signal_data"),
+        })
+
     trades.sort(key=lambda t: t.get("timestamp", ""), reverse=True)
     return trades
 
