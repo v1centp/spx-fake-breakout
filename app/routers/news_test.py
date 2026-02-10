@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request
 from datetime import datetime, timezone
 from app.services.log_service import log_to_firestore
+from app.services.firebase import get_firestore
 from app.services.news_data_service import fetch_actual_value, calculate_surprise, parse_numeric_value
 from app.services.news_analyzer import pre_release_analysis, post_release_decision
 from app.services.calendar_service import _fetch_calendar, _parse_event_datetime, get_all_upcoming_events
@@ -161,6 +162,53 @@ def get_scheduled_events():
             "best_event_idx": state.get("best_event_idx"),
         })
     return {"groups": groups, "count": len(groups)}
+
+
+@router.get("/news/history")
+def get_news_history():
+    """Return past news events with their GPT analysis and trade decisions."""
+    try:
+        db = get_firestore()
+        docs = db.collection("strategies").document("news_trading") \
+            .collection("events").order_by("timestamp", direction="DESCENDING").limit(50).stream()
+
+        events = []
+        for doc in docs:
+            data = doc.to_dict()
+            pre = data.get("pre_analysis") or {}
+            scrape = data.get("scrape_results") or {}
+
+            # Build surprise summary from scrape_results
+            surprises = []
+            for eid, info in scrape.items():
+                s = info.get("surprise") or {}
+                surprises.append({
+                    "title": info.get("title", eid),
+                    "direction": s.get("direction"),
+                    "magnitude": s.get("magnitude"),
+                    "pct_deviation": s.get("pct_deviation"),
+                })
+
+            events.append({
+                "id": doc.id,
+                "group_id": data.get("group_id"),
+                "instrument": data.get("instrument"),
+                "event_titles": data.get("events", []),
+                "timestamp": data.get("timestamp"),
+                "phase": data.get("phase"),
+                "gpt_bias": pre.get("bias"),
+                "gpt_confidence": pre.get("confidence"),
+                "gpt_analysis": pre.get("analysis"),
+                "surprises": surprises,
+                "best_event": data.get("best_event"),
+                "decision_action": data.get("decision_action"),
+                "decision_reason": data.get("decision_reason"),
+                "decision_timestamp": data.get("decision_timestamp"),
+            })
+
+        return {"events": events}
+    except Exception as e:
+        return {"events": [], "error": str(e)}
 
 
 @router.get("/news/calendar")
