@@ -181,6 +181,7 @@ def get_trade_details(trade_id: str):
         "unrealizedPL": trade.get("unrealizedPL", "0"),
         "price": trade.get("price", "0"),
         "currentUnits": trade.get("currentUnits", "0"),
+        "averageClosePrice": trade.get("averageClosePrice"),
         "sl_filled": sl_order.get("state") == "FILLED",
         "tp_filled": tp_order.get("state") == "FILLED",
     }

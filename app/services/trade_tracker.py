@@ -225,6 +225,7 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
         instrument = trade_data.get("instrument")
         initial_units = abs(float(trade_data.get("initial_units", 0)))
         step = float(trade_data.get("step", 1))
+        decimals = DECIMALS_BY_INSTRUMENT.get(instrument, 5)
 
         if not all([fill_price, risk_r, direction, instrument, initial_units]):
             return
@@ -241,7 +242,10 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
         if profit_r >= 1.0 and scaling_step == 0:
             # TP1: close 50%, SL -> breakeven
             units_to_close = max(math.floor(initial_units * 0.5 / step) * step, step)
-            oanda_service.close_trade(oanda_trade_id, units=units_to_close)
+            expected_tp1 = fill_price + risk_r if direction == "LONG" else fill_price - risk_r
+            close_resp = oanda_service.close_trade(oanda_trade_id, units=units_to_close)
+            actual_price = float(close_resp.get("orderFillTransaction", {}).get("price", 0))
+            slippage = round(actual_price - expected_tp1, decimals) if actual_price else None
 
             offset = _get_be_offset(instrument)
             be_price = fill_price + offset if direction == "LONG" else fill_price - offset
@@ -252,24 +256,34 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
                 "sl": be_price,
                 "sl_original": trade_data.get("sl"),
                 "breakeven_applied": True,
+                "tp1_fill_price": actual_price or None,
+                "tp1_slippage": slippage,
             })
 
+            slip_str = f" (slippage: {slippage})" if slippage else ""
             log_trade_event(doc_ref, "SCALING_TP1",
-                f"TP1 atteint ({profit_r:.1f}R): {units_to_close} units fermees, SL -> {be_price}", {
+                f"TP1 @ {actual_price} (attendu {expected_tp1:.{decimals}f}){slip_str}: "
+                f"{units_to_close} units fermees, SL -> {be_price}", {
                     "units_closed": units_to_close,
+                    "fill_price": actual_price,
+                    "expected_price": round(expected_tp1, decimals),
+                    "slippage": slippage,
                     "sl_new": be_price,
                     "profit_r": round(profit_r, 2),
                 })
             log_to_firestore(
                 f"[TradeTracker] Scaling TP1 on {oanda_trade_id}: "
-                f"closed {units_to_close}/{initial_units} units, SL -> {be_price}",
+                f"@ {actual_price}{slip_str}, {units_to_close}/{initial_units} units, SL -> {be_price}",
                 level="TRADING"
             )
 
         elif profit_r >= 2.0 and scaling_step == 1:
             # TP2: close 25% of original, SL -> +1R
             units_to_close = max(math.floor(initial_units * 0.25 / step) * step, step)
-            oanda_service.close_trade(oanda_trade_id, units=units_to_close)
+            expected_tp2 = fill_price + 2 * risk_r if direction == "LONG" else fill_price - 2 * risk_r
+            close_resp = oanda_service.close_trade(oanda_trade_id, units=units_to_close)
+            actual_price = float(close_resp.get("orderFillTransaction", {}).get("price", 0))
+            slippage = round(actual_price - expected_tp2, decimals) if actual_price else None
 
             if direction == "LONG":
                 new_sl = fill_price + risk_r
@@ -280,17 +294,24 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
             doc_ref.update({
                 "scaling_step": 2,
                 "sl": new_sl,
+                "tp2_fill_price": actual_price or None,
+                "tp2_slippage": slippage,
             })
 
+            slip_str = f" (slippage: {slippage})" if slippage else ""
             log_trade_event(doc_ref, "SCALING_TP2",
-                f"TP2 atteint ({profit_r:.1f}R): {units_to_close} units fermees, SL -> {new_sl}", {
+                f"TP2 @ {actual_price} (attendu {expected_tp2:.{decimals}f}){slip_str}: "
+                f"{units_to_close} units fermees, SL -> {new_sl}", {
                     "units_closed": units_to_close,
+                    "fill_price": actual_price,
+                    "expected_price": round(expected_tp2, decimals),
+                    "slippage": slippage,
                     "sl_new": new_sl,
                     "profit_r": round(profit_r, 2),
                 })
             log_to_firestore(
                 f"[TradeTracker] Scaling TP2 on {oanda_trade_id}: "
-                f"closed {units_to_close}/{initial_units} units, SL -> {new_sl}",
+                f"@ {actual_price}{slip_str}, {units_to_close}/{initial_units} units, SL -> {new_sl}",
                 level="TRADING"
             )
 
@@ -333,6 +354,18 @@ def _poll_loop():
                     scaling_step = trade_data.get("scaling_step", 0)
                     tp_filled = details.get("tp_filled", False)
                     sl_filled = details.get("sl_filled", False)
+                    close_price = float(details["averageClosePrice"]) if details.get("averageClosePrice") else None
+                    instrument = trade_data.get("instrument")
+                    decimals = DECIMALS_BY_INSTRUMENT.get(instrument, 5) if instrument else 5
+
+                    # Determine expected close price & slippage
+                    if tp_filled:
+                        expected_price = float(trade_data.get("tp", 0))
+                    elif sl_filled:
+                        expected_price = float(trade_data.get("sl", 0))
+                    else:
+                        expected_price = None
+                    slippage = round(close_price - expected_price, decimals) if (close_price and expected_price) else None
 
                     if scaling_step >= 2:
                         outcome = "win"
@@ -351,25 +384,35 @@ def _poll_loop():
                         outcome = _determine_outcome(realized_pl)
                         close_reason = "TP" if tp_filled else "SL" if sl_filled else "close"
 
-                    doc_ref.update({
+                    update_data = {
                         "outcome": outcome,
                         "close_reason": close_reason,
                         "realized_pnl": realized_pl,
                         "close_time": datetime.now().isoformat(),
-                    })
+                    }
+                    if close_price:
+                        update_data["close_price"] = close_price
+                    if slippage is not None:
+                        update_data["close_slippage"] = slippage
+                    doc_ref.update(update_data)
 
-                    log_trade_event(doc_ref, "CLOSED", f"Trade cloturé: {close_reason} — {outcome} (PnL: {realized_pl:.2f} CHF)", {
+                    slip_str = f" (slippage: {slippage})" if slippage else ""
+                    price_str = f" @ {close_price}" if close_price else ""
+                    log_trade_event(doc_ref, "CLOSED",
+                        f"Trade cloturé: {close_reason}{price_str}{slip_str} — {outcome} (PnL: {realized_pl:.2f} CHF)", {
                         "outcome": outcome,
                         "close_reason": close_reason,
+                        "close_price": close_price,
+                        "slippage": slippage,
                         "realized_pnl": round(realized_pl, 2),
-                        "instrument": trade_data.get("instrument"),
+                        "instrument": instrument,
                         "direction": trade_data.get("direction"),
                         "scaling_step": scaling_step,
                         "breakeven_applied": trade_data.get("breakeven_applied"),
                     })
 
                     log_to_firestore(
-                        f"[TradeTracker] Trade {oanda_trade_id} closed: {close_reason} — {outcome} (PnL: {realized_pl:.2f})",
+                        f"[TradeTracker] Trade {oanda_trade_id} closed: {close_reason}{price_str}{slip_str} — {outcome} (PnL: {realized_pl:.2f})",
                         level="TRADING"
                     )
                 else:
