@@ -4,8 +4,9 @@ from datetime import datetime, timezone
 from app.services.log_service import log_to_firestore
 from app.services.news_data_service import fetch_actual_value, calculate_surprise, parse_numeric_value
 from app.services.news_analyzer import pre_release_analysis, post_release_decision
-from app.services.calendar_service import get_all_upcoming_events
+from app.services.calendar_service import _fetch_calendar, _parse_event_datetime, get_all_upcoming_events
 from app.services import news_scheduler
+from app.services.news_scheduler import CURRENCY_INSTRUMENTS
 
 router = APIRouter()
 
@@ -160,3 +161,52 @@ def get_scheduled_events():
             "best_event_idx": state.get("best_event_idx"),
         })
     return {"groups": groups, "count": len(groups)}
+
+
+@router.get("/news/calendar")
+def get_news_calendar():
+    """Return all upcoming high-impact events from ForexFactory for the week."""
+    try:
+        events = _fetch_calendar()
+    except Exception:
+        return {"events": [], "error": "Failed to fetch calendar"}
+
+    now = datetime.now(timezone.utc)
+    result = []
+
+    for ev in events:
+        event_time = _parse_event_datetime(ev)
+        if not event_time:
+            continue
+
+        # Only future events
+        if event_time < now:
+            continue
+
+        country = ev["country"].upper()
+        instruments = CURRENCY_INSTRUMENTS.get(country, [])
+
+        # Check if this event is currently scheduled in the news_scheduler
+        scheduled = False
+        for state in news_scheduler._event_state.values():
+            for entry in state.get("events", []):
+                if entry["event"]["title"] == ev["title"] and entry["event"]["country"] == ev["country"]:
+                    scheduled = True
+                    break
+            if scheduled:
+                break
+
+        result.append({
+            "title": ev["title"],
+            "country": country,
+            "impact": ev["impact"],
+            "datetime_utc": event_time.isoformat(),
+            "forecast": ev.get("forecast", ""),
+            "previous": ev.get("previous", ""),
+            "instruments": instruments,
+            "scheduled": scheduled,
+        })
+
+    # Sort by time
+    result.sort(key=lambda x: x["datetime_utc"])
+    return {"events": result, "count": len(result)}
