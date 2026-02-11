@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from app.services.log_service import log_to_firestore
 from app.services.firebase import get_firestore
 from app.services.news_data_service import fetch_actual_value, calculate_surprise, parse_numeric_value
-from app.services.news_analyzer import pre_release_analysis, post_release_decision
+from app.services.news_analyzer import pre_release_analysis, post_release_decision, _is_inverse_event
 from app.services.calendar_service import _fetch_calendar, _parse_event_datetime, get_all_upcoming_events
 from app.services import news_scheduler
 from app.services.news_scheduler import CURRENCY_INSTRUMENTS
@@ -182,11 +182,14 @@ def get_news_history():
             surprises = []
             for eid, info in scrape.items():
                 s = info.get("surprise") or {}
+                title = info.get("title", eid)
+                inverse = _is_inverse_event(title)
                 surprises.append({
-                    "title": info.get("title", eid),
+                    "title": title,
                     "direction": s.get("direction"),
                     "magnitude": s.get("magnitude"),
                     "pct_deviation": s.get("pct_deviation"),
+                    "is_inverse": inverse,
                 })
 
             events.append({
