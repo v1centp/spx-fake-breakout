@@ -1,0 +1,125 @@
+// This Pine Script(R) is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Ichimoku Backtest Strategy — meme logique que le webhook, avec SL/TP/breakeven
+
+//@version=5
+strategy("Ichimoku Backtest", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2, commission_value=0.002, slippage=1)
+
+// ─── INPUTS ───────────────────────────────────────────────
+tenkanPeriod  = input.int(9,  "Tenkan Period",  minval=1)
+kijunPeriod   = input.int(26, "Kijun Period",   minval=1)
+senkouBPeriod = input.int(52, "Senkou B Period", minval=1)
+displacement  = input.int(26, "Displacement",    minval=1)
+tpRatio       = input.float(3.0, "TP Ratio (xR)", minval=0.5, step=0.5)
+slBufferPips  = input.float(3.0, "SL Buffer (pips)", minval=0, step=0.5)
+pipSize       = input.float(0.0001, "Pip Size", tooltip="0.0001 pour la plupart des paires, 0.01 pour JPY")
+useBreakeven  = input.bool(true, "Breakeven actif")
+beThreshold   = input.float(1.0, "Breakeven trigger (xR)", minval=0.5, step=0.5, tooltip="Deplace SL au breakeven quand le profit atteint ce multiple du risque")
+maxTradesPerDay = input.int(1, "Max trades par jour par direction", minval=1)
+closeFriday   = input.bool(true, "Fermer avant le weekend (vendredi)")
+fridayCloseHour = input.int(20, "Heure fermeture vendredi (UTC)", minval=0, maxval=23)
+
+// ─── ICHIMOKU CALCULATIONS ────────────────────────────────
+donchian(len) =>
+    math.avg(ta.highest(high, len), ta.lowest(low, len))
+
+tenkanSen = donchian(tenkanPeriod)
+kijunSen  = donchian(kijunPeriod)
+
+senkouSpanA = math.avg(tenkanSen, kijunSen)
+senkouSpanB = donchian(senkouBPeriod)
+
+currentSSA = senkouSpanA[displacement]
+currentSSB = senkouSpanB[displacement]
+
+chikouSpan    = close
+chikouRefPrice = close[displacement]
+
+// ─── PLOT ICHIMOKU ────────────────────────────────────────
+plot(tenkanSen, "Tenkan", color=color.new(color.blue, 0), linewidth=1)
+plot(kijunSen,  "Kijun",  color=color.new(color.red, 0),  linewidth=1)
+
+spanAPlot = plot(senkouSpanA, "Senkou A", offset=displacement, color=color.new(color.green, 80))
+spanBPlot = plot(senkouSpanB, "Senkou B", offset=displacement, color=color.new(color.red, 80))
+fill(spanAPlot, spanBPlot, color=senkouSpanA > senkouSpanB ? color.new(color.green, 90) : color.new(color.red, 90))
+
+plot(chikouSpan, "Chikou", offset=-displacement, color=color.new(color.purple, 0), linewidth=1)
+
+// ─── SIGNAL DETECTION ─────────────────────────────────────
+kumoTop    = math.max(currentSSA, currentSSB)
+kumoBottom = math.min(currentSSA, currentSSB)
+
+slBuffer = slBufferPips * pipSize
+
+// Conditions LONG
+longTKCross = ta.crossover(tenkanSen, kijunSen)
+longValid   = close > kumoTop and tenkanSen > kijunSen and chikouSpan > chikouRefPrice
+
+// Conditions SHORT
+shortTKCross = ta.crossunder(tenkanSen, kijunSen)
+shortValid   = close < kumoBottom and tenkanSen < kijunSen and chikouSpan < chikouRefPrice
+
+bullishSignal = longTKCross and longValid
+bearishSignal = shortTKCross and shortValid
+
+// ─── TRADE TRACKING (1 par jour par direction) ────────────
+var int lastLongDay  = 0
+var int lastShortDay = 0
+currentDay = dayofmonth + month * 100 + year * 10000
+
+canLong  = currentDay != lastLongDay
+canShort = currentDay != lastShortDay
+
+// ─── FRIDAY CLOSE ─────────────────────────────────────────
+isFridayClose = closeFriday and dayofweek == dayofweek.friday and hour >= fridayCloseHour
+
+if isFridayClose and strategy.position_size != 0
+    strategy.close_all("Weekend close")
+
+// ─── BREAKEVEN TRACKING ──────────────────────────────────
+var float entryPrice = na
+var float initialSL  = na
+var float risk       = na
+var bool  beApplied  = false
+
+// ─── ENTRIES ──────────────────────────────────────────────
+if bullishSignal and canLong and strategy.position_size == 0 and not isFridayClose
+    sl = kijunSen - slBuffer
+    riskAmt = close - sl
+    if riskAmt > 0
+        tp = close + tpRatio * riskAmt
+        strategy.entry("Long", strategy.long)
+        strategy.exit("Long Exit", "Long", stop=sl, limit=tp)
+        entryPrice := close
+        initialSL  := sl
+        risk       := riskAmt
+        beApplied  := false
+        lastLongDay := currentDay
+
+if bearishSignal and canShort and strategy.position_size == 0 and not isFridayClose
+    sl = kijunSen + slBuffer
+    riskAmt = sl - close
+    if riskAmt > 0
+        tp = close - tpRatio * riskAmt
+        strategy.entry("Short", strategy.short)
+        strategy.exit("Short Exit", "Short", stop=sl, limit=tp)
+        entryPrice := close
+        initialSL  := sl
+        risk       := riskAmt
+        beApplied  := false
+        lastShortDay := currentDay
+
+// ─── BREAKEVEN LOGIC ─────────────────────────────────────
+if useBreakeven and strategy.position_size != 0 and not beApplied and not na(risk)
+    currentProfit = strategy.position_size > 0 ? close - entryPrice : entryPrice - close
+    if currentProfit >= risk * beThreshold
+        if strategy.position_size > 0
+            tp = entryPrice + tpRatio * risk
+            strategy.exit("Long Exit", "Long", stop=entryPrice, limit=tp)
+        else
+            tp = entryPrice - tpRatio * risk
+            strategy.exit("Short Exit", "Short", stop=entryPrice, limit=tp)
+        beApplied := true
+
+// ─── VISUAL SIGNALS ───────────────────────────────────────
+plotshape(bullishSignal and canLong, "Long Signal",  shape.triangleup,   location.belowbar, color.green, size=size.small)
+plotshape(bearishSignal and canShort, "Short Signal", shape.triangledown, location.abovebar, color.red,   size=size.small)

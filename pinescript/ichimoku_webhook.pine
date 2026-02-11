@@ -61,9 +61,9 @@ shortChikouConfirm = chikouSpan < chikouRefPrice
 // Trigger : TK cross baissier (Tenkan passe en-dessous de Kijun)
 shortTKCross = ta.crossunder(tenkanSen, kijunSen)
 
-// Signal complet : TK cross + toutes conditions remplies
-bullishSignal = longTKCross and longPriceAboveKumo and longChikouConfirm
-bearishSignal = shortTKCross and shortPriceBelowKumo and shortChikouConfirm
+// Signal complet : TK cross + toutes conditions + bougie confirmee
+bullishSignal = longTKCross and longPriceAboveKumo and longChikouConfirm and barstate.isconfirmed
+bearishSignal = shortTKCross and shortPriceBelowKumo and shortChikouConfirm and barstate.isconfirmed
 
 // ─── VISUAL SIGNALS ───────────────────────────────────────
 plotshape(bullishSignal, "Long Signal",  shape.triangleup,   location.belowbar, color.green, size=size.small)
