@@ -1,6 +1,7 @@
 # app/services/ichimoku_analyzer.py
 import os
 import json
+from datetime import datetime, timezone
 from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -62,24 +63,56 @@ def _parse_gpt_json(text: str) -> dict:
         return None
 
 
+def _enrich_events_with_actuals(all_events: list) -> str:
+    """Build calendar text with actual values for already-released events."""
+    from app.services.news_data_service import fetch_actual_value
+
+    now = datetime.now(timezone.utc)
+    lines = []
+
+    for e in all_events:
+        parts = (
+            f"- {e['time']} {e['country']}: {e['title']} "
+            f"(impact: {e['impact']}, forecast: {e.get('forecast','N/A')}, "
+            f"previous: {e.get('previous','N/A')}"
+        )
+
+        # For past high-impact events, try to fetch actual value
+        dt_str = e.get("datetime_utc")
+        if dt_str and e.get("impact") == "High":
+            try:
+                event_dt = datetime.fromisoformat(dt_str)
+                if event_dt < now:
+                    event_date = event_dt.strftime("%Y-%m-%d")
+                    result = fetch_actual_value(e["title"], e["country"], event_date)
+                    if result.get("success") and result.get("actual_raw"):
+                        parts += f", ACTUAL: {result['actual_raw']}"
+            except Exception:
+                pass
+
+        parts += ")"
+        lines.append(parts)
+
+    return "\n".join(lines) or "Aucun evenement economique notable."
+
+
 def gpt_macro_analysis(oanda_instrument: str, all_events: list) -> dict:
     """Etape 1 : analyse macro — quelle est la tendance attendue sur l'instrument
-    en fonction de TOUTES les news economiques du jour ?"""
+    en fonction de TOUTES les news economiques du jour ?
+    Enrichit les events passes avec les valeurs actuelles (via Investing.com)."""
 
     base, quote = oanda_instrument.split("_")
 
-    calendar_text = "\n".join(
-        f"- {e['time']} {e['country']}: {e['title']} (impact: {e['impact']}, forecast: {e.get('forecast','N/A')}, previous: {e.get('previous','N/A')})"
-        for e in all_events
-    ) or "Aucun evenement economique notable."
+    calendar_text = _enrich_events_with_actuals(all_events)
 
-    prompt = f"""Tu es un analyste macro forex. Voici le calendrier economique complet du jour (toutes devises):
+    prompt = f"""Tu es un analyste macro forex. Voici le calendrier economique complet du jour (toutes devises).
+Les evenements deja publies incluent leur valeur ACTUAL.
 
 {calendar_text}
 
-En te basant sur ces evenements, quelle est ta vision pour la paire {base}/{quote} aujourd'hui ?
-- Quelles news pourraient impacter {base} (haussier ou baissier) ?
-- Quelles news pourraient impacter {quote} (haussier ou baissier) ?
+En te basant sur ces evenements (en particulier les surprises entre ACTUAL et forecast), quelle est ta vision pour la paire {base}/{quote} aujourd'hui ?
+- Quelles news publiees ont impacte {base} ou {quote} ? (comparer ACTUAL vs forecast)
+- Quelles news a venir pourraient encore impacter {base} ou {quote} ?
 - Quel est le biais directionnel resultant pour {base}/{quote} ?
 
 Reponds en JSON strict:
