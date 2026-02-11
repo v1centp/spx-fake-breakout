@@ -1,6 +1,6 @@
 # app/services/shared_strategy_tools.py
 import math
-from app.services import oanda_service
+from app.services import oanda_service, kraken_service
 
 STEP = 0.1  # pas OANDA
 
@@ -10,7 +10,9 @@ def _floor_step(x: float, step: float = STEP) -> float:
         return 0.0
     return math.floor(x / step) * step
 
-def get_entry_price(instrument: str):
+def get_entry_price(instrument: str, broker: str = "oanda"):
+    if broker == "kraken":
+        return kraken_service.get_latest_price(instrument)
     return oanda_service.get_latest_price(instrument)
 
 def calculate_sl_tp(entry, sl_level, direction, tp_ratio=2.75, decimals=2):
@@ -36,33 +38,54 @@ def _get_quote_home_rate(instrument: str) -> float:
             return 1.0
 
 
-def compute_position_size(risk_per_unit, risk_limit=50, step=None, instrument=None):
-    """Taille théorique puis **floor** au pas configurable (pour respecter le risque max).
-    Si instrument est fourni, convertit le risque de la devise de cotation vers CHF."""
+def compute_position_size(risk_per_unit, risk_limit=50, step=None, instrument=None, account_currency="CHF"):
+    """Taille theorique puis **floor** au pas configurable (pour respecter le risque max).
+    Si instrument est fourni et account_currency == "CHF", convertit le risque de la devise de cotation vers CHF.
+    Pour account_currency == "USD", pas de conversion (risque directement en USD)."""
     if step is None:
         step = STEP
     if risk_per_unit <= 0:
         return 0.0
-    if instrument:
+    if instrument and account_currency == "CHF":
         rate = _get_quote_home_rate(instrument)
         risk_per_unit = risk_per_unit * rate
+    # For USD account (Kraken), risk is already in USD — no conversion needed
     raw = risk_limit / risk_per_unit
     return _floor_step(raw, step)
 
-def execute_trade(instrument: str, entry_price, sl_price, tp_price, units, direction, step=None):
+def execute_trade(instrument: str, entry_price, sl_price, tp_price, units, direction, step=None, broker: str = "oanda", dry_run: bool = False):
     """
     Envoie un multiple **exact** du step configurable :
-    - on normalise la quantité au pas donné
+    - on normalise la quantite au pas donne
     - on applique le signe selon la direction
     """
     if step is None:
         step = STEP
     qty = _floor_step(abs(float(units)), step)
-    print(f"execute_trade: {units} -> {qty} ({direction})")
+    print(f"execute_trade: {units} -> {qty} ({direction}) [{broker}]")
     if qty < step:
         raise ValueError(f"units too small (< {step}): {units}")
-    signed = -qty if direction == "SHORT" else qty
 
+    if broker == "kraken":
+        side = "buy" if direction == "LONG" else "sell"
+        response = kraken_service.create_order(
+            pair=instrument,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            volume=qty,
+            side=side,
+            validate=dry_run,
+        )
+        signed = -qty if direction == "SHORT" else qty
+        return {
+            "units": signed,
+            "trade_id": response.get("txid"),
+            "tp_txid": response.get("tp_txid"),
+            "fill_price": float(entry_price),  # market order, use entry as approximation
+        }
+
+    # OANDA path (default)
+    signed = -qty if direction == "SHORT" else qty
     response = oanda_service.create_order(
         instrument=instrument,
         entry_price=entry_price,

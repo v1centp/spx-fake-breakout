@@ -2,13 +2,22 @@ import os
 import json
 import firebase_admin
 from firebase_admin import credentials, firestore
+from dotenv import load_dotenv
 
-# Vérifie si c'est un JSON inline
-json_str = os.getenv("FIREBASE_CRED")
+load_dotenv()
+
+# Vérifie si c'est un JSON inline (FIREBASE_CRED ou FIREBASE_CREDENTIALS_JSON)
+json_str = os.getenv("FIREBASE_CRED", "")
+if not json_str.strip().startswith("{"):
+    json_str = os.getenv("FIREBASE_CREDENTIALS_JSON", "")
 if json_str and json_str.strip().startswith("{"):
     cred_path = "/tmp/firebase_key.json"
+    # Parse and fix escaped newlines in private_key from .env
+    parsed = json.loads(json_str)
+    if "private_key" in parsed:
+        parsed["private_key"] = parsed["private_key"].replace("\\n", "\n")
     with open(cred_path, "w") as f:
-        f.write(json_str)
+        json.dump(parsed, f)
 else:
     cred_path = os.getenv("FIREBASE_CRED", "firebase-service-account.json")
 

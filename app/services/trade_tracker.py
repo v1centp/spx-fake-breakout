@@ -4,21 +4,35 @@ import time
 from datetime import datetime, timezone, timedelta
 import pytz
 from app.services.firebase import get_firestore
-from app.services import oanda_service
+from app.services import oanda_service, kraken_service
 from app.services.oanda_service import DECIMALS_BY_INSTRUMENT
+from app.services.kraken_service import DECIMALS_BY_PAIR
 from app.services.log_service import log_to_firestore, log_trade_event
 from app.config.universe import UNIVERSE
 from app.config.instrument_map import INSTRUMENT_MAP
 
 POLL_INTERVAL = 30  # seconds
 
-_open_trades = []  # list of (doc_ref, oanda_trade_id)
+_open_trades = []  # list of (doc_ref, trade_id_value, broker)
 
 # Reverse mapping: instrument -> session config
 INSTRUMENT_SESSION = {cfg["instrument"]: cfg["session"] for cfg in UNIVERSE.values()}
 
 # Forex instruments (from instrument_map)
-FOREX_INSTRUMENTS = {cfg["oanda"] for cfg in INSTRUMENT_MAP.values()}
+FOREX_INSTRUMENTS = {cfg["oanda"] for cfg in INSTRUMENT_MAP.values() if "oanda" in cfg}
+
+
+def _get_decimals(instrument: str, broker: str) -> int:
+    """Get decimals for an instrument based on broker."""
+    if broker == "kraken":
+        return DECIMALS_BY_PAIR.get(instrument, 2)
+    return DECIMALS_BY_INSTRUMENT.get(instrument, 5)
+
+
+def _get_latest_price(instrument: str, broker: str) -> float:
+    if broker == "kraken":
+        return kraken_service.get_latest_price(instrument)
+    return oanda_service.get_latest_price(instrument)
 
 
 def _load_open_trades():
@@ -27,9 +41,12 @@ def _load_open_trades():
     trades = []
 
     for doc in db.collection_group("trades").where("outcome", "==", "open").stream():
-        oanda_id = doc.to_dict().get("oanda_trade_id")
-        if oanda_id:
-            trades.append((doc.reference, oanda_id))
+        data = doc.to_dict()
+        broker = data.get("broker", "oanda")
+        # Use generic trade_id field, fallback to oanda_trade_id
+        trade_id_val = data.get("trade_id") or data.get("oanda_trade_id")
+        if trade_id_val:
+            trades.append((doc.reference, trade_id_val, broker))
 
     return trades
 
@@ -54,8 +71,10 @@ def _should_auto_close(instrument: str) -> bool:
     return now_local >= trade_end - timedelta(minutes=5)
 
 
-def _should_close_before_weekend(instrument: str) -> bool:
-    """Return True if it's Friday after 20:55 UTC and instrument is forex."""
+def _should_close_before_weekend(instrument: str, broker: str) -> bool:
+    """Return True if it's Friday after 20:55 UTC and instrument is forex (not crypto)."""
+    if broker == "kraken":
+        return False  # Crypto trades 24/7, no weekend close
     if instrument not in FOREX_INSTRUMENTS:
         return False
     now_utc = datetime.now(timezone.utc)
@@ -63,16 +82,42 @@ def _should_close_before_weekend(instrument: str) -> bool:
     return now_utc.weekday() == 4 and now_utc.hour >= 20 and now_utc.minute >= 55
 
 
-def _auto_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict) -> bool:
+def _close_trade_broker(trade_id_val: str, trade_data: dict, broker: str, units=None):
+    """Close a trade via the appropriate broker."""
+    if broker == "kraken":
+        instrument = trade_data.get("instrument", "")
+        direction = trade_data.get("direction", "LONG")
+        side = "buy" if direction == "LONG" else "sell"
+        return kraken_service.close_trade(trade_id_val, pair=instrument, side=side, volume=units)
+    return oanda_service.close_trade(trade_id_val, units=units)
+
+
+def _modify_sl_broker(trade_id_val: str, new_sl: float, instrument: str, broker: str):
+    """Modify SL via the appropriate broker."""
+    if broker == "kraken":
+        return kraken_service.modify_trade_sl(trade_id_val, new_sl, instrument)
+    return oanda_service.modify_trade_sl(trade_id_val, new_sl, instrument)
+
+
+def _get_trade_details_broker(trade_id_val: str, broker: str):
+    """Get trade details via the appropriate broker."""
+    if broker == "kraken":
+        return kraken_service.get_trade_details(trade_id_val)
+    return oanda_service.get_trade_details(trade_id_val)
+
+
+def _auto_close_trade(doc_ref, trade_id_val: str, trade_data: dict, broker: str) -> bool:
     """Close a trade near session end or before weekend for forex. Returns True if closed."""
     instrument = trade_data.get("instrument")
     if not instrument:
         return False
-    if not _should_auto_close(instrument) and not _should_close_before_weekend(instrument):
+    if broker == "kraken":
+        return False  # No auto-close for crypto
+    if not _should_auto_close(instrument) and not _should_close_before_weekend(instrument, broker):
         return False
 
     try:
-        response = oanda_service.close_trade(oanda_trade_id)
+        response = _close_trade_broker(trade_id_val, trade_data, broker)
         realized_pl = 0.0
         try:
             fill_tx = response.get("orderFillTransaction", {})
@@ -93,28 +138,29 @@ def _auto_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict) -> bool:
         })
 
         log_to_firestore(
-            f"[TradeTracker] Trade {oanda_trade_id} auto-closed: PnL={realized_pl}",
+            f"[TradeTracker] Trade {trade_id_val} auto-closed: PnL={realized_pl}",
             level="TRADING"
         )
         return True
     except Exception as e:
         log_to_firestore(
-            f"[TradeTracker] Auto-close error on trade {oanda_trade_id}: {e}",
+            f"[TradeTracker] Auto-close error on trade {trade_id_val}: {e}",
             level="ERROR"
         )
         return False
 
 
-def _force_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict, reason: str) -> bool:
+def _force_close_trade(doc_ref, trade_id_val: str, trade_data: dict, reason: str, broker: str) -> bool:
     """Force close a trade (e.g. max hold time expired). Returns True if closed."""
     try:
-        response = oanda_service.close_trade(oanda_trade_id)
+        response = _close_trade_broker(trade_id_val, trade_data, broker)
         realized_pl = 0.0
-        try:
-            fill_tx = response.get("orderFillTransaction", {})
-            realized_pl = float(fill_tx.get("pl", 0))
-        except Exception:
-            pass
+        if broker == "oanda":
+            try:
+                fill_tx = response.get("orderFillTransaction", {})
+                realized_pl = float(fill_tx.get("pl", 0))
+            except Exception:
+                pass
 
         doc_ref.update({
             "outcome": reason,
@@ -130,27 +176,27 @@ def _force_close_trade(doc_ref, oanda_trade_id: str, trade_data: dict, reason: s
         })
 
         log_to_firestore(
-            f"[TradeTracker] Trade {oanda_trade_id} force-closed ({reason}): PnL={realized_pl}",
+            f"[TradeTracker] Trade {trade_id_val} force-closed ({reason}): PnL={realized_pl}",
             level="TRADING"
         )
         return True
     except Exception as e:
         log_to_firestore(
-            f"[TradeTracker] Force-close error on trade {oanda_trade_id}: {e}",
+            f"[TradeTracker] Force-close error on trade {trade_id_val}: {e}",
             level="ERROR"
         )
         return False
 
 
-def _get_be_offset(instrument: str) -> float:
+def _get_be_offset(instrument: str, broker: str) -> float:
     """Return a small price offset for breakeven SL, ensuring a tiny locked-in profit."""
-    decimals = DECIMALS_BY_INSTRUMENT.get(instrument, 2)
+    decimals = _get_decimals(instrument, broker)
     # CFDs (1-2 decimals): 0.1, JPY pairs (3 decimals): 0.01, other forex (5 decimals): 0.0001
     offsets = {1: 0.1, 2: 0.1, 3: 0.01, 5: 0.0001}
     return offsets.get(decimals, 10 ** -(decimals))
 
 
-def _check_breakeven(doc_ref, oanda_trade_id: str):
+def _check_breakeven(doc_ref, trade_id_val: str, broker: str):
     """Move SL to breakeven (fill_price + small offset) when trade reaches +0.5R profit."""
     try:
         trade_data = doc_ref.get().to_dict()
@@ -174,7 +220,7 @@ def _check_breakeven(doc_ref, oanda_trade_id: str):
         if risk == 0:
             return
 
-        current_price = oanda_service.get_latest_price(instrument)
+        current_price = _get_latest_price(instrument, broker)
 
         if direction == "LONG":
             profit = current_price - fill_price
@@ -182,13 +228,13 @@ def _check_breakeven(doc_ref, oanda_trade_id: str):
             profit = fill_price - current_price
 
         if profit >= risk * 0.5:
-            offset = _get_be_offset(instrument)
+            offset = _get_be_offset(instrument, broker)
             if direction == "LONG":
                 be_price = fill_price + offset
             else:
                 be_price = fill_price - offset
 
-            oanda_service.modify_trade_sl(oanda_trade_id, be_price, instrument)
+            _modify_sl_broker(trade_id_val, be_price, instrument, broker)
             doc_ref.update({
                 "breakeven_applied": True,
                 "sl_original": sl,
@@ -201,23 +247,23 @@ def _check_breakeven(doc_ref, oanda_trade_id: str):
                 "risk": round(risk, 2),
             })
             log_to_firestore(
-                f"[TradeTracker] Breakeven applied on trade {oanda_trade_id}: "
+                f"[TradeTracker] Breakeven applied on trade {trade_id_val}: "
                 f"SL moved from {sl} to {be_price} (profit={profit:.2f}, risk={risk:.2f})",
                 level="TRADING"
             )
     except Exception as e:
         log_to_firestore(
-            f"[TradeTracker] Breakeven check error on trade {oanda_trade_id}: {e}",
+            f"[TradeTracker] Breakeven check error on trade {trade_id_val}: {e}",
             level="ERROR"
         )
 
 
-def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
-    """Scaling-out for ichimoku: TP1=1R (close 50%), TP2=2R (close 25%), TP3=6R (OANDA TP)."""
+def _check_scaling_out(doc_ref, trade_id_val: str, trade_data: dict, broker: str):
+    """Scaling-out for ichimoku: TP1=1R (close 50%), TP2=2R (close 25%), TP3=6R (broker TP)."""
     try:
         scaling_step = trade_data.get("scaling_step", 0)
         if scaling_step >= 2:
-            return  # TP1+TP2 done; TP3 (6R) handled by OANDA TP
+            return  # TP1+TP2 done; TP3 (6R) handled by broker TP
 
         fill_price = float(trade_data.get("fill_price", 0))
         risk_r = float(trade_data.get("risk_r", 0))
@@ -225,12 +271,12 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
         instrument = trade_data.get("instrument")
         initial_units = abs(float(trade_data.get("initial_units", 0)))
         step = float(trade_data.get("step", 1))
-        decimals = DECIMALS_BY_INSTRUMENT.get(instrument, 5)
+        decimals = _get_decimals(instrument, broker)
 
         if not all([fill_price, risk_r, direction, instrument, initial_units]):
             return
 
-        current_price = oanda_service.get_latest_price(instrument)
+        current_price = _get_latest_price(instrument, broker)
 
         if direction == "LONG":
             profit = current_price - fill_price
@@ -243,13 +289,18 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
             # TP1: close 50%, SL -> breakeven
             units_to_close = max(math.floor(initial_units * 0.5 / step) * step, step)
             expected_tp1 = fill_price + risk_r if direction == "LONG" else fill_price - risk_r
-            close_resp = oanda_service.close_trade(oanda_trade_id, units=units_to_close)
-            actual_price = float(close_resp.get("orderFillTransaction", {}).get("price", 0))
+
+            close_resp = _close_trade_broker(trade_id_val, trade_data, broker, units=units_to_close)
+            actual_price = 0
+            if broker == "oanda":
+                actual_price = float(close_resp.get("orderFillTransaction", {}).get("price", 0))
+            else:
+                actual_price = current_price  # Kraken doesn't return fill price in same format
             slippage = round(actual_price - expected_tp1, decimals) if actual_price else None
 
-            offset = _get_be_offset(instrument)
+            offset = _get_be_offset(instrument, broker)
             be_price = fill_price + offset if direction == "LONG" else fill_price - offset
-            oanda_service.modify_trade_sl(oanda_trade_id, be_price, instrument)
+            _modify_sl_broker(trade_id_val, be_price, instrument, broker)
 
             doc_ref.update({
                 "scaling_step": 1,
@@ -272,7 +323,7 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
                     "profit_r": round(profit_r, 2),
                 })
             log_to_firestore(
-                f"[TradeTracker] Scaling TP1 on {oanda_trade_id}: "
+                f"[TradeTracker] Scaling TP1 on {trade_id_val}: "
                 f"@ {actual_price}{slip_str}, {units_to_close}/{initial_units} units, SL -> {be_price}",
                 level="TRADING"
             )
@@ -281,15 +332,20 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
             # TP2: close 25% of original, SL -> +1R
             units_to_close = max(math.floor(initial_units * 0.25 / step) * step, step)
             expected_tp2 = fill_price + 2 * risk_r if direction == "LONG" else fill_price - 2 * risk_r
-            close_resp = oanda_service.close_trade(oanda_trade_id, units=units_to_close)
-            actual_price = float(close_resp.get("orderFillTransaction", {}).get("price", 0))
+
+            close_resp = _close_trade_broker(trade_id_val, trade_data, broker, units=units_to_close)
+            actual_price = 0
+            if broker == "oanda":
+                actual_price = float(close_resp.get("orderFillTransaction", {}).get("price", 0))
+            else:
+                actual_price = current_price
             slippage = round(actual_price - expected_tp2, decimals) if actual_price else None
 
             if direction == "LONG":
                 new_sl = fill_price + risk_r
             else:
                 new_sl = fill_price - risk_r
-            oanda_service.modify_trade_sl(oanda_trade_id, new_sl, instrument)
+            _modify_sl_broker(trade_id_val, new_sl, instrument, broker)
 
             doc_ref.update({
                 "scaling_step": 2,
@@ -310,14 +366,14 @@ def _check_scaling_out(doc_ref, oanda_trade_id: str, trade_data: dict):
                     "profit_r": round(profit_r, 2),
                 })
             log_to_firestore(
-                f"[TradeTracker] Scaling TP2 on {oanda_trade_id}: "
+                f"[TradeTracker] Scaling TP2 on {trade_id_val}: "
                 f"@ {actual_price}{slip_str}, {units_to_close}/{initial_units} units, SL -> {new_sl}",
                 level="TRADING"
             )
 
     except Exception as e:
         log_to_firestore(
-            f"[TradeTracker] Scaling check error on trade {oanda_trade_id}: {e}",
+            f"[TradeTracker] Scaling check error on trade {trade_id_val}: {e}",
             level="ERROR"
         )
 
@@ -337,15 +393,15 @@ def _poll_loop():
                 )
 
             still_open = []
-            for doc_ref, oanda_trade_id in _open_trades:
+            for doc_ref, trade_id_val, broker in _open_trades:
                 try:
-                    details = oanda_service.get_trade_details(oanda_trade_id)
+                    details = _get_trade_details_broker(trade_id_val, broker)
                 except Exception as e:
                     log_to_firestore(
-                        f"[TradeTracker] Error fetching trade {oanda_trade_id}: {e}",
+                        f"[TradeTracker] Error fetching trade {trade_id_val} [{broker}]: {e}",
                         level="ERROR"
                     )
-                    still_open.append((doc_ref, oanda_trade_id))
+                    still_open.append((doc_ref, trade_id_val, broker))
                     continue
 
                 if details["state"] == "CLOSED":
@@ -356,7 +412,7 @@ def _poll_loop():
                     sl_filled = details.get("sl_filled", False)
                     close_price = float(details["averageClosePrice"]) if details.get("averageClosePrice") else None
                     instrument = trade_data.get("instrument")
-                    decimals = DECIMALS_BY_INSTRUMENT.get(instrument, 5) if instrument else 5
+                    decimals = _get_decimals(instrument, broker) if instrument else 5
 
                     # Determine expected close price & slippage
                     if tp_filled:
@@ -369,10 +425,10 @@ def _poll_loop():
 
                     if scaling_step >= 2:
                         outcome = "win"
-                        close_reason = "TP3" if tp_filled else "SL +1R (après TP2)"
+                        close_reason = "TP3" if tp_filled else "SL +1R (apres TP2)"
                     elif scaling_step == 1:
                         outcome = "win"
-                        close_reason = "TP (après TP1)" if tp_filled else "BE SL (après TP1)"
+                        close_reason = "TP (apres TP1)" if tp_filled else "BE SL (apres TP1)"
                     elif trade_data.get("breakeven_applied"):
                         if sl_filled:
                             outcome = "breakeven"
@@ -384,6 +440,7 @@ def _poll_loop():
                         outcome = _determine_outcome(realized_pl)
                         close_reason = "TP" if tp_filled else "SL" if sl_filled else "close"
 
+                    currency = "USD" if broker == "kraken" else "CHF"
                     update_data = {
                         "outcome": outcome,
                         "close_reason": close_reason,
@@ -399,7 +456,7 @@ def _poll_loop():
                     slip_str = f" (slippage: {slippage})" if slippage else ""
                     price_str = f" @ {close_price}" if close_price else ""
                     log_trade_event(doc_ref, "CLOSED",
-                        f"Trade cloturé: {close_reason}{price_str}{slip_str} — {outcome} (PnL: {realized_pl:.2f} CHF)", {
+                        f"Trade cloture: {close_reason}{price_str}{slip_str} — {outcome} (PnL: {realized_pl:.2f} {currency})", {
                         "outcome": outcome,
                         "close_reason": close_reason,
                         "close_price": close_price,
@@ -409,16 +466,17 @@ def _poll_loop():
                         "direction": trade_data.get("direction"),
                         "scaling_step": scaling_step,
                         "breakeven_applied": trade_data.get("breakeven_applied"),
+                        "broker": broker,
                     })
 
                     log_to_firestore(
-                        f"[TradeTracker] Trade {oanda_trade_id} closed: {close_reason}{price_str}{slip_str} — {outcome} (PnL: {realized_pl:.2f})",
+                        f"[TradeTracker] Trade {trade_id_val} closed: {close_reason}{price_str}{slip_str} — {outcome} (PnL: {realized_pl:.2f})",
                         level="TRADING"
                     )
                 else:
-                    # --- Auto-close near session end ---
+                    # --- Auto-close near session end (OANDA only) ---
                     trade_data = doc_ref.get().to_dict() or {}
-                    if _auto_close_trade(doc_ref, oanda_trade_id, trade_data):
+                    if _auto_close_trade(doc_ref, trade_id_val, trade_data, broker):
                         continue
 
                     # --- Max hold time (news trading) ---
@@ -426,15 +484,15 @@ def _poll_loop():
                     if max_hold:
                         max_hold_dt = datetime.fromisoformat(max_hold)
                         if datetime.now(timezone.utc) >= max_hold_dt:
-                            _force_close_trade(doc_ref, oanda_trade_id, trade_data, "max_hold_expired")
+                            _force_close_trade(doc_ref, trade_id_val, trade_data, "max_hold_expired", broker)
                             continue
 
                     # --- Position management: scaling or breakeven ---
                     if trade_data.get("scaling_step") is not None:
-                        _check_scaling_out(doc_ref, oanda_trade_id, trade_data)
+                        _check_scaling_out(doc_ref, trade_id_val, trade_data, broker)
                     else:
-                        _check_breakeven(doc_ref, oanda_trade_id)
-                    still_open.append((doc_ref, oanda_trade_id))
+                        _check_breakeven(doc_ref, trade_id_val, broker)
+                    still_open.append((doc_ref, trade_id_val, broker))
 
             _open_trades = still_open
 

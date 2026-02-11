@@ -4,7 +4,9 @@
 # TP ratio: 6R
 
 INSTRUMENT_MAP = {
+    # ── OANDA forex ──
     "OANDA:USDCHF": {
+        "broker": "oanda",
         "oanda": "USD_CHF",
         "decimals": 5,
         "step": 1,
@@ -13,6 +15,7 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.00020,
     },
     "OANDA:EURUSD": {
+        "broker": "oanda",
         "oanda": "EUR_USD",
         "decimals": 5,
         "step": 1,
@@ -21,6 +24,7 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.00020,
     },
     "OANDA:USDJPY": {
+        "broker": "oanda",
         "oanda": "USD_JPY",
         "decimals": 3,
         "step": 1,
@@ -29,6 +33,7 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.020,
     },
     "OANDA:GBPUSD": {
+        "broker": "oanda",
         "oanda": "GBP_USD",
         "decimals": 5,
         "step": 1,
@@ -37,6 +42,7 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.00020,
     },
     "OANDA:EURGBP": {
+        "broker": "oanda",
         "oanda": "EUR_GBP",
         "decimals": 5,
         "step": 1,
@@ -45,6 +51,7 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.00020,
     },
     "OANDA:EURJPY": {
+        "broker": "oanda",
         "oanda": "EUR_JPY",
         "decimals": 3,
         "step": 1,
@@ -53,6 +60,7 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.020,
     },
     "OANDA:GBPJPY": {
+        "broker": "oanda",
         "oanda": "GBP_JPY",
         "decimals": 3,
         "step": 1,
@@ -61,6 +69,7 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.020,
     },
     "OANDA:AUDUSD": {
+        "broker": "oanda",
         "oanda": "AUD_USD",
         "decimals": 5,
         "step": 1,
@@ -69,6 +78,7 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.00020,
     },
     "OANDA:NZDUSD": {
+        "broker": "oanda",
         "oanda": "NZD_USD",
         "decimals": 5,
         "step": 1,
@@ -77,12 +87,104 @@ INSTRUMENT_MAP = {
         "sl_buffer": 0.00020,
     },
     "OANDA:USDCAD": {
+        "broker": "oanda",
         "oanda": "USD_CAD",
         "decimals": 5,
         "step": 1,
         "base_currency": "CAD",
         "tp_ratio": 6.0,
         "sl_buffer": 0.00020,
+    },
+    # ── Kraken crypto ──
+    "KRAKEN:BTCUSD": {
+        "broker": "kraken",
+        "pair": "XBTUSD",
+        "decimals": 1,
+        "step": 0.0001,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 100,
+    },
+    "KRAKEN:ETHUSD": {
+        "broker": "kraken",
+        "pair": "ETHUSD",
+        "decimals": 2,
+        "step": 0.01,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 5,
+    },
+    "KRAKEN:SOLUSD": {
+        "broker": "kraken",
+        "pair": "SOLUSD",
+        "decimals": 2,
+        "step": 0.1,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 0.5,
+    },
+    "KRAKEN:ADAUSD": {
+        "broker": "kraken",
+        "pair": "ADAUSD",
+        "decimals": 6,
+        "step": 1,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 0.005,
+    },
+    "KRAKEN:DOGEUSD": {
+        "broker": "kraken",
+        "pair": "XDGUSD",
+        "decimals": 5,
+        "step": 1,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 0.002,
+    },
+    "KRAKEN:XRPUSD": {
+        "broker": "kraken",
+        "pair": "XXRPZUSD",
+        "decimals": 5,
+        "step": 1,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 0.01,
+    },
+    "KRAKEN:LINKUSD": {
+        "broker": "kraken",
+        "pair": "LINKUSD",
+        "decimals": 3,
+        "step": 0.1,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 0.1,
+    },
+    "KRAKEN:XMRUSD": {
+        "broker": "kraken",
+        "pair": "XXMRZUSD",
+        "decimals": 2,
+        "step": 0.01,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 2,
+    },
+    "KRAKEN:PEPEUSD": {
+        "broker": "kraken",
+        "pair": "PEPEUSD",
+        "decimals": 9,
+        "step": 10000,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 0.0000005,
+    },
+    "KRAKEN:ATOMUSD": {
+        "broker": "kraken",
+        "pair": "ATOMUSD",
+        "decimals": 4,
+        "step": 0.1,
+        "base_currency": "USD",
+        "tp_ratio": 6.0,
+        "sl_buffer": 0.05,
     },
 }
 
