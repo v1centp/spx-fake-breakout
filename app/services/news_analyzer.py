@@ -1,6 +1,7 @@
 # app/services/news_analyzer.py
 import os
 import json
+from datetime import datetime, timezone
 from openai import OpenAI
 from app.services.log_service import log_to_firestore
 
@@ -19,9 +20,42 @@ def _parse_gpt_json(text: str) -> dict | None:
         return None
 
 
+def _enrich_calendar_text(all_events: list) -> str:
+    """Build calendar text with actual values for already-released high-impact events."""
+    from app.services.news_data_service import fetch_actual_value
+
+    now = datetime.now(timezone.utc)
+    lines = []
+
+    for e in all_events:
+        parts = (
+            f"- {e['time']} {e['country']}: {e['title']} "
+            f"(impact: {e['impact']}, forecast: {e.get('forecast', 'N/A')}, "
+            f"previous: {e.get('previous', 'N/A')}"
+        )
+
+        dt_str = e.get("datetime_utc")
+        if dt_str and e.get("impact") == "High":
+            try:
+                event_dt = datetime.fromisoformat(dt_str)
+                if event_dt < now:
+                    event_date = event_dt.strftime("%Y-%m-%d")
+                    result = fetch_actual_value(e["title"], e["country"], event_date)
+                    if result.get("success") and result.get("actual_raw"):
+                        parts += f", ACTUAL: {result['actual_raw']}"
+            except Exception:
+                pass
+
+        parts += ")"
+        lines.append(parts)
+
+    return "\n".join(lines) or "Aucun autre evenement."
+
+
 def pre_release_analysis(event: dict, instrument: str, all_events: list) -> dict:
     """
     GPT pre-analysis at T-2min before economic release.
+    Enriches past events with actual values from Investing.com.
 
     Args:
         event: {title, country, forecast, previous, time, impact}
@@ -33,13 +67,10 @@ def pre_release_analysis(event: dict, instrument: str, all_events: list) -> dict
     """
     base, quote = instrument.split("_")
 
-    calendar_text = "\n".join(
-        f"- {e['time']} {e['country']}: {e['title']} (impact: {e['impact']}, "
-        f"forecast: {e.get('forecast', 'N/A')}, previous: {e.get('previous', 'N/A')})"
-        for e in all_events
-    ) or "Aucun autre evenement."
+    calendar_text = _enrich_calendar_text(all_events)
 
     prompt = f"""Tu es un analyste macro forex specialise dans le news trading.
+Les evenements deja publies incluent leur valeur ACTUAL.
 
 Evenement imminent:
 - Titre: {event['title']}
@@ -54,7 +85,7 @@ Calendrier complet du jour:
 Paire analysee: {base}/{quote}
 
 Analyse:
-1. Quel est le contexte macro actuel pour {event['country']} ?
+1. Quel est le contexte macro actuel pour {event['country']} ? (tiens compte des surprises ACTUAL vs forecast deja publiees)
 2. Si le chiffre sort AU-DESSUS du forecast, quel impact sur {base}/{quote} ? (BULLISH ou BEARISH)
 3. Si le chiffre sort EN-DESSOUS du forecast, quel impact sur {base}/{quote} ? (BULLISH ou BEARISH)
 4. Quel est ton biais pre-release pour cette paire ?
