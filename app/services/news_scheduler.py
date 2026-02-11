@@ -16,8 +16,8 @@ NEWS_TRADING_CONFIG = {
     "tp_ratio": 2.0,
     "max_hold_minutes": 30,
     "pre_analysis_offset_seconds": -120,   # T-2min
-    "scrape_offset_seconds": 90,           # T+90s (TE needs time to publish)
-    "trade_decision_offset_seconds": 180,  # T+3min (retry scrape if needed)
+    "scrape_offset_seconds": 30,           # T+30s (Investing.com updates in ~1-2min)
+    "trade_decision_offset_seconds": 120,  # T+2min (retry scrape if T+30s was too early)
 }
 
 # Which instruments to trade for each currency
@@ -99,7 +99,7 @@ def _job_pre_analysis(group_id: str):
 
 
 def _job_scrape_actual(group_id: str):
-    """T+30s job: scrape actual values for all events in the group (1 cached API call)."""
+    """T+30s job: scrape actual values from Investing.com for all events in the group."""
     state = _event_state.get(group_id)
     if not state:
         return
@@ -190,7 +190,7 @@ def _job_scrape_actual(group_id: str):
 
 
 def _job_trade_decision(group_id: str):
-    """T+2min job: make one trade decision using the strongest surprise in the group."""
+    """T+2min job: make one trade decision using the strongest surprise in the group (retries scrape if needed)."""
     state = _event_state.get(group_id)
     if not state:
         return
@@ -357,7 +357,7 @@ def load_and_schedule_today():
                 args=[group_id], id=f"pre_{group_id}", replace_existing=True,
             )
 
-        # Schedule T+30s: scrape actual (1 per group, iterates all events)
+        # Schedule T+30s: scrape actuals from Investing.com (1 per group)
         scrape_time = event_time + timedelta(seconds=cfg["scrape_offset_seconds"])
         if scrape_time > now:
             _scheduler.add_job(
@@ -365,7 +365,7 @@ def load_and_schedule_today():
                 args=[group_id], id=f"scrape_{group_id}", replace_existing=True,
             )
 
-        # Schedule T+2min: trade decision (1 per group)
+        # Schedule T+2min: trade decision with retry (1 per group)
         decision_time = event_time + timedelta(seconds=cfg["trade_decision_offset_seconds"])
         if decision_time > now:
             _scheduler.add_job(
