@@ -71,7 +71,7 @@ plotshape(bearishSignal, "Short Signal", shape.triangledown, location.abovebar, 
 
 // ─── WEBHOOK ALERTS ───────────────────────────────────────
 if bullishSignal
-    alert('{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","direction":"LONG","close":' + str.tostring(close) + ',"tenkan":' + str.tostring(tenkanSen) + ',"kijun":' + str.tostring(kijunSen) + ',"ssa":' + str.tostring(currentSSA) + ',"ssb":' + str.tostring(currentSSB) + ',"chikou":' + str.tostring(chikouSpan) + ',"chikou_ref_price":' + str.tostring(chikouRefPrice) + '}', alert.freq_once_per_bar)
+    alert('{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","direction":"LONG","close":' + str.tostring(close) + ',"tenkan":' + str.tostring(tenkanSen) + ',"kijun":' + str.tostring(kijunSen) + ',"ssa":' + str.tostring(currentSSA) + ',"ssb":' + str.tostring(currentSSB) + ',"chikou":' + str.tostring(chikouSpan) + ',"chikou_ref_price":' + str.tostring(chikouRefPrice) + '}', alert.freq_once_per_bar_close)
 
 if bearishSignal
-    alert('{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","direction":"SHORT","close":' + str.tostring(close) + ',"tenkan":' + str.tostring(tenkanSen) + ',"kijun":' + str.tostring(kijunSen) + ',"ssa":' + str.tostring(currentSSA) + ',"ssb":' + str.tostring(currentSSB) + ',"chikou":' + str.tostring(chikouSpan) + ',"chikou_ref_price":' + str.tostring(chikouRefPrice) + '}', alert.freq_once_per_bar)
+    alert('{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","direction":"SHORT","close":' + str.tostring(close) + ',"tenkan":' + str.tostring(tenkanSen) + ',"kijun":' + str.tostring(kijunSen) + ',"ssa":' + str.tostring(currentSSA) + ',"ssb":' + str.tostring(currentSSB) + ',"chikou":' + str.tostring(chikouSpan) + ',"chikou_ref_price":' + str.tostring(chikouRefPrice) + '}', alert.freq_once_per_bar_close)

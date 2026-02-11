@@ -47,22 +47,36 @@ def _parse_event_datetime(event):
     return et.localize(dt).astimezone(pytz.utc)
 
 
-def check_high_impact_nearby(oanda_instrument: str, window_minutes=60) -> bool:
+def check_high_impact_nearby(oanda_instrument: str, window_minutes=60) -> dict:
+    """Check if high-impact news is nearby for the instrument's currencies.
+
+    Returns:
+        {blocked: bool, nearby_events: [{title, country, time, minutes_away}]}
+    """
     currencies = oanda_instrument.split("_")  # ["USD", "CHF"]
     try:
         events = _fetch_calendar()
     except Exception:
-        return False  # en cas d'erreur, ne pas bloquer le trade
+        return {"blocked": False, "nearby_events": []}
     now = datetime.now(pytz.utc)
+    nearby = []
     for ev in events:
         if ev["impact"] != "High":
             continue
         if ev["country"].upper() not in currencies:
             continue
         ev_time = _parse_event_datetime(ev)
-        if ev_time and abs((ev_time - now).total_seconds()) < window_minutes * 60:
-            return True
-    return False
+        if not ev_time:
+            continue
+        delta_seconds = (ev_time - now).total_seconds()
+        if abs(delta_seconds) < window_minutes * 60:
+            nearby.append({
+                "title": ev["title"],
+                "country": ev["country"],
+                "time": ev["time"],
+                "minutes_away": round(delta_seconds / 60, 1),
+            })
+    return {"blocked": len(nearby) > 0, "nearby_events": nearby}
 
 
 def get_upcoming_events(oanda_instrument: str) -> list:

@@ -67,12 +67,27 @@ def process_webhook_signal(body: dict) -> dict:
     )
 
     # 4. Check calendrier economique
-    if check_high_impact_nearby(oanda_instrument):
+    news_check = check_high_impact_nearby(oanda_instrument)
+    if news_check["blocked"]:
+        nearby_titles = [e["title"] for e in news_check["nearby_events"]]
         log_to_firestore(
-            f"[{STRATEGY_KEY}] NO_GO: high-impact news proche pour {oanda_instrument}",
+            f"[{STRATEGY_KEY}] NO_GO: high-impact news proche pour {oanda_instrument}: {nearby_titles}",
             level="WEBHOOK"
         )
-        return {"status": "REJECT", "reason": "High-impact economic event nearby"}
+        db.collection("strategies").document(STRATEGY_KEY).collection("gpt_rejections").add({
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "instrument": oanda_instrument,
+            "signal_direction": direction,
+            "gpt_bias": "N/A",
+            "gpt_confidence": None,
+            "gpt_analysis": None,
+            "rejection_type": "news",
+            "news_check": news_check,
+            "ichimoku_reasons": rb_result["reasons"],
+            "signal_data": signal,
+        })
+        return {"status": "REJECT", "reason": "High-impact economic event nearby", "news_check": news_check}
 
     # 5. GPT : analyse macro globale → biais directionnel
     all_events = get_all_upcoming_events()
@@ -196,6 +211,7 @@ def process_webhook_signal(body: dict) -> dict:
         "gpt_macro_confidence": macro_result.get("confidence"),
         "gpt_macro_analysis": macro_result.get("analysis"),
         "ichimoku_reasons": rb_result["reasons"],
+        "news_check": news_check,
     }
     trade_ref.set(trade_data)
 

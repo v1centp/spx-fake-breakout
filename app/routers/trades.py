@@ -31,10 +31,12 @@ def get_all_trades():
             "timestamp": data.get("timestamp"),
             "date": data.get("date"),
             "outcome": "rejected",
+            "rejection_type": data.get("rejection_type", "gpt"),
             "gpt_bias": data.get("gpt_bias"),
             "gpt_confidence": data.get("gpt_confidence"),
             "gpt_analysis": data.get("gpt_analysis"),
             "ichimoku_reasons": data.get("ichimoku_reasons"),
+            "news_check": data.get("news_check"),
             "signal_data": data.get("signal_data"),
         })
 

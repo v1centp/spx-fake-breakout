@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from app.services.firebase import get_firestore
 from app.services import oanda_service
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 router = APIRouter()
@@ -11,9 +11,10 @@ router = APIRouter()
 @router.get("/candles", response_model=List[dict])
 async def get_candles(day: str):
     db = get_firestore()
-    query = db.collection("ohlc_1m").where("day", "==", day).order_by("s")
-    docs = query.stream()
-    return [doc.to_dict() for doc in docs]
+    prev_day = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    docs_prev = db.collection("ohlc_1m").where("day", "==", prev_day).order_by("s").stream()
+    docs_day = db.collection("ohlc_1m").where("day", "==", day).order_by("s").stream()
+    return [doc.to_dict() for doc in docs_prev] + [doc.to_dict() for doc in docs_day]
 
 
 # ✅ Endpoint pour récupérer le range d'ouverture d'un jour donné
@@ -44,7 +45,8 @@ async def get_oanda_candles(
     day: str = Query(..., description="Date YYYY-MM-DD"),
     granularity: str = Query("M5", description="Candle granularity, e.g. M1, M5, M15, H1"),
 ):
-    from_time = f"{day}T00:00:00Z"
+    prev_day = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    from_time = f"{prev_day}T00:00:00Z"
     end_of_day = f"{day}T23:59:59Z"
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     to_time = min(end_of_day, now)

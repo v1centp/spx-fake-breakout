@@ -153,11 +153,23 @@ def _fetch_investing_day_events(event_date: str) -> list:
             "time": row.get("time", ""),
         })
 
-    _day_cache[event_date] = {"events": events, "ts": now}
-    log_to_firestore(
-        f"[NewsData] Cached {len(events)} Investing.com events for {event_date}",
-        level="INFO"
+    # Don't cache if any high-impact event is missing its actual value
+    # (it may be in the process of being published on Investing.com)
+    missing_actuals = any(
+        not str(ev.get("actual") or "").strip() or str(ev.get("actual")) == "None"
+        for ev in events
     )
+    if missing_actuals:
+        log_to_firestore(
+            f"[NewsData] {len(events)} events for {event_date} (not cached — some actuals missing)",
+            level="INFO"
+        )
+    else:
+        _day_cache[event_date] = {"events": events, "ts": now}
+        log_to_firestore(
+            f"[NewsData] Cached {len(events)} Investing.com events for {event_date}",
+            level="INFO"
+        )
     return events
 
 
@@ -221,10 +233,8 @@ def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
             )
             return result
 
-        # Event not found or actual not yet published
-        result = {"actual": None, "forecast": None, "previous": None, "success": False}
-        _cache[cache_key] = {"data": result, "ts": now}
-        return result
+        # Event not found or actual not yet published — don't cache failures
+        return {"actual": None, "forecast": None, "previous": None, "success": False}
 
     except Exception as e:
         log_to_firestore(f"[NewsData] Investing.com scrape error for {event_title}: {e}", level="ERROR")
