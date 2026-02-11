@@ -1,36 +1,35 @@
 # app/services/news_data_service.py
-import os
 import re
 import time
-import requests
+from datetime import datetime, timedelta
+import investpy
 from app.services.log_service import log_to_firestore
 
 _cache = {}
 CACHE_TTL = 30  # seconds
 
 _day_cache = {}  # key: event_date -> {events: [...], ts: ...}
-DAY_CACHE_TTL = 300  # 5 minutes — avoids redundant API calls for same-day events
+DAY_CACHE_TTL = 300  # 5 minutes — avoids redundant scrapes for same-day events
 
 
 def get_day_cache():
     """Return a reference to the day cache (for invalidation from outside)."""
     return _day_cache
 
-TE_API_URL = "https://api.tradingeconomics.com/calendar"
-TE_API_KEY = os.getenv("TRADINGECONOMICS_API_KEY", "guest:guest")
 
-# TradingEconomics country names -> ForexFactory currency codes
-TE_COUNTRY_TO_CURRENCY = {
-    "united states": "USD",
-    "euro area": "EUR",
-    "united kingdom": "GBP",
-    "japan": "JPY",
-    "switzerland": "CHF",
-    "canada": "CAD",
-    "australia": "AUD",
-    "new zealand": "NZD",
-    "china": "CNY",
+# Investpy country names for each currency we trade
+CURRENCY_TO_COUNTRY = {
+    "USD": "united states",
+    "EUR": "euro zone",
+    "GBP": "united kingdom",
+    "JPY": "japan",
+    "CHF": "switzerland",
+    "CAD": "canada",
+    "AUD": "australia",
+    "NZD": "new zealand",
 }
+
+ALL_COUNTRIES = list(CURRENCY_TO_COUNTRY.values())
 
 
 def parse_numeric_value(raw: str) -> float | None:
@@ -110,29 +109,53 @@ def calculate_surprise(actual: float, forecast: float) -> dict:
     }
 
 
-def _fetch_te_day_events(event_date: str) -> list:
-    """Fetch and cache all TradingEconomics high-impact events for a given date.
+def _fetch_investing_day_events(event_date: str) -> list:
+    """Fetch and cache all high-impact events from Investing.com for a given date.
 
     Uses a 5-minute cache so that multiple events at the same time
-    (e.g. CPI + NFP + Claims all at 18:30) share a single API call.
+    (e.g. CPI + NFP + Claims all at 18:30) share a single scrape call.
+
+    Args:
+        event_date: "YYYY-MM-DD" format
     """
     now = time.time()
 
     if event_date in _day_cache and now - _day_cache[event_date]["ts"] < DAY_CACHE_TTL:
         return _day_cache[event_date]["events"]
 
-    url = f"{TE_API_URL}/country/All/{event_date}/{event_date}"
-    resp = requests.get(url, params={
-        "c": TE_API_KEY,
-        "f": "json",
-        "importance": 3,
-    }, timeout=15)
-    resp.raise_for_status()
-    events = resp.json()
+    # Convert YYYY-MM-DD to DD/MM/YYYY for investpy
+    dt = datetime.strptime(event_date, "%Y-%m-%d")
+    from_date = dt.strftime("%d/%m/%Y")
+    # investpy requires to_date > from_date
+    to_date = (dt + timedelta(days=1)).strftime("%d/%m/%Y")
+
+    df = investpy.news.economic_calendar(
+        time_zone="GMT",
+        countries=ALL_COUNTRIES,
+        importances=["high"],
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    # Convert DataFrame to list of dicts and filter to requested date only
+    target_date_str = dt.strftime("%d/%m/%Y")
+    events = []
+    for _, row in df.iterrows():
+        if row.get("date") != target_date_str:
+            continue
+        events.append({
+            "event": row.get("event", ""),
+            "currency": row.get("currency", ""),
+            "actual": row.get("actual"),
+            "forecast": row.get("forecast"),
+            "previous": row.get("previous"),
+            "importance": row.get("importance", ""),
+            "time": row.get("time", ""),
+        })
 
     _day_cache[event_date] = {"events": events, "ts": now}
     log_to_firestore(
-        f"[NewsData] Cached {len(events)} TE events for {event_date}",
+        f"[NewsData] Cached {len(events)} Investing.com events for {event_date}",
         level="INFO"
     )
     return events
@@ -140,7 +163,7 @@ def _fetch_te_day_events(event_date: str) -> list:
 
 def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
     """
-    Fetch actual value from TradingEconomics API for a specific event.
+    Fetch actual value from Investing.com for a specific event.
 
     Args:
         event_title: e.g. "Nonfarm Payrolls", "CPI m/m"
@@ -159,12 +182,11 @@ def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
             return cached["data"]
 
     try:
-        events = _fetch_te_day_events(event_date)
+        events = _fetch_investing_day_events(event_date)
 
         for ev in events:
-            ev_title = ev.get("Event", "")
-            ev_country = ev.get("Country", "").lower()
-            ev_currency = TE_COUNTRY_TO_CURRENCY.get(ev_country, "")
+            ev_title = ev.get("event", "")
+            ev_currency = (ev.get("currency") or "").upper()
 
             # Match by title and currency
             if not _fuzzy_match(event_title, ev_title):
@@ -172,9 +194,9 @@ def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
             if country and ev_currency != country.upper():
                 continue
 
-            actual_raw = str(ev.get("Actual", "")).strip()
-            forecast_raw = str(ev.get("Forecast", "")).strip()
-            previous_raw = str(ev.get("Previous", "")).strip()
+            actual_raw = str(ev.get("actual") or "").strip()
+            forecast_raw = str(ev.get("forecast") or "").strip()
+            previous_raw = str(ev.get("previous") or "").strip()
 
             # Skip if no actual value yet
             if not actual_raw or actual_raw in ("", "None"):
@@ -187,8 +209,8 @@ def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
                 "actual_raw": actual_raw,
                 "forecast_raw": forecast_raw,
                 "previous_raw": previous_raw,
-                "te_event": ev_title,
-                "te_country": ev.get("Country"),
+                "investing_event": ev_title,
+                "investing_currency": ev_currency,
                 "success": True,
             }
 
@@ -205,7 +227,7 @@ def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
         return result
 
     except Exception as e:
-        log_to_firestore(f"[NewsData] API error for {event_title}: {e}", level="ERROR")
+        log_to_firestore(f"[NewsData] Investing.com scrape error for {event_title}: {e}", level="ERROR")
         return {"actual": None, "forecast": None, "previous": None, "success": False}
 
 
@@ -218,8 +240,9 @@ def _fuzzy_match(target: str, candidate: str) -> bool:
         return True
 
     # Check if all significant words match
-    target_words = set(re.split(r"\s+", target_lower)) - {"m/m", "y/y", "q/q", "of", "the", "and", "for"}
-    candidate_words = set(re.split(r"\s+", candidate_lower))
+    noise = {"m/m", "y/y", "q/q", "of", "the", "and", "for", "(mom)", "(yoy)", "(qoq)"}
+    target_words = set(re.split(r"\s+", target_lower)) - noise
+    candidate_words = set(re.split(r"\s+", candidate_lower)) - noise
     if target_words and target_words.issubset(candidate_words):
         return True
 
