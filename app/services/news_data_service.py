@@ -1,8 +1,7 @@
 # app/services/news_data_service.py
 import re
 import time
-from datetime import datetime, timedelta
-import investpy
+import requests
 from app.services.log_service import log_to_firestore
 
 _cache = {}
@@ -17,7 +16,6 @@ def get_day_cache():
     return _day_cache
 
 
-# Investpy country names for each currency we trade
 CURRENCY_TO_COUNTRY = {
     "USD": "united states",
     "EUR": "euro zone",
@@ -29,7 +27,25 @@ CURRENCY_TO_COUNTRY = {
     "NZD": "new zealand",
 }
 
-ALL_COUNTRIES = list(CURRENCY_TO_COUNTRY.values())
+# Investing.com country IDs for calendar API
+_INVESTING_COUNTRY_IDS = {
+    "united states": 5,
+    "euro zone": 72,
+    "united kingdom": 4,
+    "japan": 35,
+    "switzerland": 12,
+    "canada": 6,
+    "australia": 25,
+    "new zealand": 43,
+}
+
+_INVESTING_URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
+_INVESTING_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "X-Requested-With": "XMLHttpRequest",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Referer": "https://www.investing.com/economic-calendar/",
+}
 
 
 def parse_numeric_value(raw: str) -> float | None:
@@ -109,11 +125,40 @@ def calculate_surprise(actual: float, forecast: float) -> dict:
     }
 
 
+def _parse_investing_row(row_html: str) -> dict | None:
+    """Parse a single event row from Investing.com calendar HTML."""
+    time_m = re.search(r'js-time[^>]*>\s*([\d:]+(?:\s*[APap][Mm])?)', row_html)
+    curr_m = re.search(r'flagCur[^>]*>.*?</span>\s*(\w+)', row_html, re.DOTALL)
+    event_m = re.search(r'class="left event"[^>]*>.*?>(.*?)</a>', row_html, re.DOTALL)
+    actual_m = re.search(r'eventActual_\d+"[^>]*>(.*?)</td>', row_html, re.DOTALL)
+    forecast_m = re.search(r'eventForecast_\d+"[^>]*>(.*?)</td>', row_html, re.DOTALL)
+    previous_m = re.search(r'eventPrevious_\d+"[^>]*>(.*?)</td>', row_html, re.DOTALL)
+
+    def _clean(m):
+        if not m:
+            return ""
+        return re.sub(r'<[^>]+>', '', m.group(1)).replace('&nbsp;', '').strip()
+
+    event_name = _clean(event_m)
+    if not event_name:
+        return None
+
+    return {
+        "event": event_name,
+        "currency": _clean(curr_m).upper(),
+        "actual": _clean(actual_m) or None,
+        "forecast": _clean(forecast_m) or None,
+        "previous": _clean(previous_m) or None,
+        "importance": "high",
+        "time": _clean(time_m),
+    }
+
+
 def _fetch_investing_day_events(event_date: str) -> list:
     """Fetch and cache all high-impact events from Investing.com for a given date.
 
     Uses a 5-minute cache so that multiple events at the same time
-    (e.g. CPI + NFP + Claims all at 18:30) share a single scrape call.
+    (e.g. CPI + NFP + Claims all at 13:30) share a single HTTP call.
 
     Args:
         event_date: "YYYY-MM-DD" format
@@ -123,35 +168,30 @@ def _fetch_investing_day_events(event_date: str) -> list:
     if event_date in _day_cache and now - _day_cache[event_date]["ts"] < DAY_CACHE_TTL:
         return _day_cache[event_date]["events"]
 
-    # Convert YYYY-MM-DD to DD/MM/YYYY for investpy
-    dt = datetime.strptime(event_date, "%Y-%m-%d")
-    from_date = dt.strftime("%d/%m/%Y")
-    # investpy requires to_date > from_date
-    to_date = (dt + timedelta(days=1)).strftime("%d/%m/%Y")
+    # Build POST params — all tracked countries, high importance only
+    params = [("country[]", cid) for cid in _INVESTING_COUNTRY_IDS.values()]
+    params.append(("importance[]", 3))
+    params.extend([
+        ("dateFrom", event_date),
+        ("dateTo", event_date),
+        ("timeZone", 8),        # GMT+0 display
+        ("timeFilter", "timeOnly"),
+        ("currentTab", "custom"),
+        ("limit_from", 0),
+    ])
 
-    df = investpy.news.economic_calendar(
-        time_zone="GMT",
-        countries=ALL_COUNTRIES,
-        importances=["high"],
-        from_date=from_date,
-        to_date=to_date,
+    resp = requests.post(
+        _INVESTING_URL, headers=_INVESTING_HEADERS, data=params, timeout=15,
     )
+    resp.raise_for_status()
+    html = resp.json().get("data", "")
 
-    # Convert DataFrame to list of dicts and filter to requested date only
-    target_date_str = dt.strftime("%d/%m/%Y")
+    # Parse each event row from the returned HTML
     events = []
-    for _, row in df.iterrows():
-        if row.get("date") != target_date_str:
-            continue
-        events.append({
-            "event": row.get("event", ""),
-            "currency": row.get("currency", ""),
-            "actual": row.get("actual"),
-            "forecast": row.get("forecast"),
-            "previous": row.get("previous"),
-            "importance": row.get("importance", ""),
-            "time": row.get("time", ""),
-        })
+    for row_html in re.findall(r'<tr id="eventRowId_\d+"[^>]*>(.*?)</tr>', html, re.DOTALL):
+        ev = _parse_investing_row(row_html)
+        if ev:
+            events.append(ev)
 
     # Don't cache if any high-impact event is missing its actual value
     # (it may be in the process of being published on Investing.com)
@@ -241,18 +281,37 @@ def fetch_actual_value(event_title: str, country: str, event_date: str) -> dict:
         return {"actual": None, "forecast": None, "previous": None, "success": False}
 
 
+# ForexFactory → Investing.com title aliases (FF names that differ significantly)
+_EVENT_ALIASES = {
+    "non-farm employment change": "nonfarm payrolls",
+    "employment change": "nonfarm payrolls",
+}
+
+
 def _fuzzy_match(target: str, candidate: str) -> bool:
-    """Simple fuzzy matching: check if key words from target appear in candidate."""
+    """Fuzzy matching between ForexFactory and Investing.com event titles."""
     target_lower = target.lower().strip()
     candidate_lower = candidate.lower().strip()
 
-    if target_lower in candidate_lower or candidate_lower in target_lower:
+    # Normalize: remove hyphens, parentheses, extra whitespace
+    def _norm(s):
+        return re.sub(r'\s+', ' ', s.replace("-", " ").replace("(", "").replace(")", "")).strip()
+
+    target_n = _norm(target_lower)
+    candidate_n = _norm(candidate_lower)
+
+    if target_n in candidate_n or candidate_n in target_n:
+        return True
+
+    # Check known aliases
+    alias = _EVENT_ALIASES.get(target_lower)
+    if alias and alias in candidate_n:
         return True
 
     # Check if all significant words match
-    noise = {"m/m", "y/y", "q/q", "of", "the", "and", "for", "(mom)", "(yoy)", "(qoq)"}
-    target_words = set(re.split(r"\s+", target_lower)) - noise
-    candidate_words = set(re.split(r"\s+", candidate_lower)) - noise
+    noise = {"m/m", "y/y", "q/q", "of", "the", "and", "for", "mom", "yoy", "qoq"}
+    target_words = set(target_n.split()) - noise
+    candidate_words = set(candidate_n.split()) - noise
     if target_words and target_words.issubset(candidate_words):
         return True
 

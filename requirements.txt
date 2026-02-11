@@ -12,4 +12,3 @@ html5lib
 feedparser
 tiktoken
 apscheduler
-investpy

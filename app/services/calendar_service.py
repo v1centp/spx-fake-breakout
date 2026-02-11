@@ -34,17 +34,16 @@ def _fetch_calendar():
 
 
 def _parse_event_datetime(event):
-    """Parse ForexFactory date (MM-DD-YYYY) + time (h:mmam ET) to UTC datetime."""
+    """Parse ForexFactory date (MM-DD-YYYY) + time (h:mmam GMT) to UTC datetime."""
     date_str = event["date"]
     time_str = event["time"]
     if not date_str or not time_str or time_str in ("", "All Day", "Tentative"):
         return None
-    et = pytz.timezone("America/New_York")
     try:
         dt = datetime.strptime(f"{date_str} {time_str}", "%m-%d-%Y %I:%M%p")
     except ValueError:
         return None
-    return et.localize(dt).astimezone(pytz.utc)
+    return pytz.utc.localize(dt)
 
 
 def check_high_impact_nearby(oanda_instrument: str, window_minutes=60) -> dict:
