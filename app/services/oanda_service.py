@@ -142,7 +142,7 @@ def close_trade(trade_id: str, units=None):
     url = f"{OANDA_API_URL}/accounts/{OANDA_ACCOUNT_ID}/trades/{trade_id}/close"
     kwargs = {"headers": headers}
     if units is not None:
-        kwargs["json"] = {"units": str(abs(float(units)))}
+        kwargs["json"] = {"units": str(round(abs(float(units)), 4))}
     response = requests.put(url, **kwargs)
     if not response.ok:
         log_to_firestore(

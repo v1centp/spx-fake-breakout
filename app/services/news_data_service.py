@@ -1,6 +1,7 @@
 # app/services/news_data_service.py
 import re
 import time
+import random
 import requests
 from app.services.log_service import log_to_firestore
 
@@ -40,11 +41,19 @@ _INVESTING_COUNTRY_IDS = {
 }
 
 _INVESTING_URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
-_INVESTING_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+]
+_INVESTING_BASE_HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
     "Accept": "application/json, text/javascript, */*; q=0.01",
     "Referer": "https://www.investing.com/economic-calendar/",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.investing.com",
 }
 
 
@@ -180,11 +189,25 @@ def _fetch_investing_day_events(event_date: str) -> list:
         ("limit_from", 0),
     ])
 
-    resp = requests.post(
-        _INVESTING_URL, headers=_INVESTING_HEADERS, data=params, timeout=15,
-    )
-    resp.raise_for_status()
-    html = resp.json().get("data", "")
+    html = None
+    last_error = None
+    for attempt in range(3):
+        headers = {**_INVESTING_BASE_HEADERS, "User-Agent": random.choice(_USER_AGENTS)}
+        try:
+            resp = requests.post(
+                _INVESTING_URL, headers=headers, data=params, timeout=15,
+            )
+            resp.raise_for_status()
+            html = resp.json().get("data", "")
+            break
+        except requests.exceptions.HTTPError as e:
+            last_error = e
+            if resp.status_code == 403 and attempt < 2:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise
+    if html is None:
+        raise last_error
 
     # Parse each event row from the returned HTML
     events = []

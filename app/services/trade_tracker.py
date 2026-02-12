@@ -287,7 +287,7 @@ def _check_scaling_out(doc_ref, trade_id_val: str, trade_data: dict, broker: str
 
         if profit_r >= 1.0 and scaling_step == 0:
             # TP1: close 50%, SL -> breakeven
-            units_to_close = max(math.floor(initial_units * 0.5 / step) * step, step)
+            units_to_close = round(max(math.floor(initial_units * 0.5 / step) * step, step), 4)
             expected_tp1 = fill_price + risk_r if direction == "LONG" else fill_price - risk_r
 
             close_resp = _close_trade_broker(trade_id_val, trade_data, broker, units=units_to_close)
@@ -330,7 +330,7 @@ def _check_scaling_out(doc_ref, trade_id_val: str, trade_data: dict, broker: str
 
         elif profit_r >= 2.0 and scaling_step == 1:
             # TP2: close 25% of original, SL -> +1R
-            units_to_close = max(math.floor(initial_units * 0.25 / step) * step, step)
+            units_to_close = round(max(math.floor(initial_units * 0.25 / step) * step, step), 4)
             expected_tp2 = fill_price + 2 * risk_r if direction == "LONG" else fill_price - 2 * risk_r
 
             close_resp = _close_trade_broker(trade_id_val, trade_data, broker, units=units_to_close)
