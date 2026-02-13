@@ -11,6 +11,10 @@ CACHE_TTL = 30  # seconds
 _day_cache = {}  # key: event_date -> {events: [...], ts: ...}
 DAY_CACHE_TTL = 300  # 5 minutes — avoids redundant scrapes for same-day events
 
+_session = None
+_session_ts = 0
+_SESSION_TTL = 600  # refresh session cookies every 10 min
+
 
 def get_day_cache():
     """Return a reference to the day cache (for invalidation from outside)."""
@@ -42,11 +46,11 @@ _INVESTING_COUNTRY_IDS = {
 
 _INVESTING_URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
 _USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0",
 ]
 _INVESTING_BASE_HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
@@ -54,6 +58,10 @@ _INVESTING_BASE_HEADERS = {
     "Referer": "https://www.investing.com/economic-calendar/",
     "Accept-Language": "en-US,en;q=0.9",
     "Origin": "https://www.investing.com",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "sec-ch-ua-platform": '"Windows"',
 }
 
 
@@ -163,6 +171,37 @@ def _parse_investing_row(row_html: str) -> dict | None:
     }
 
 
+def _get_investing_session() -> requests.Session:
+    """Return a requests.Session with fresh cookies from Investing.com.
+
+    Investing.com sets anti-bot cookies on the initial page load.
+    Re-using them in subsequent API calls prevents 403 errors.
+    """
+    global _session, _session_ts
+
+    now = time.time()
+    if _session and now - _session_ts < _SESSION_TTL:
+        return _session
+
+    s = requests.Session()
+    ua = random.choice(_USER_AGENTS)
+    s.headers.update({**_INVESTING_BASE_HEADERS, "User-Agent": ua})
+
+    try:
+        # Visit the calendar page to collect cookies
+        s.get(
+            "https://www.investing.com/economic-calendar/",
+            headers={"User-Agent": ua, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+            timeout=15,
+        )
+    except Exception:
+        pass  # best-effort — POST may still work without cookies
+
+    _session = s
+    _session_ts = now
+    return s
+
+
 def _fetch_investing_day_events(event_date: str) -> list:
     """Fetch and cache all high-impact events from Investing.com for a given date.
 
@@ -172,6 +211,8 @@ def _fetch_investing_day_events(event_date: str) -> list:
     Args:
         event_date: "YYYY-MM-DD" format
     """
+    global _session, _session_ts
+
     now = time.time()
 
     if event_date in _day_cache and now - _day_cache[event_date]["ts"] < DAY_CACHE_TTL:
@@ -192,19 +233,21 @@ def _fetch_investing_day_events(event_date: str) -> list:
     html = None
     last_error = None
     for attempt in range(3):
-        headers = {**_INVESTING_BASE_HEADERS, "User-Agent": random.choice(_USER_AGENTS)}
+        session = _get_investing_session()
         try:
-            resp = requests.post(
-                _INVESTING_URL, headers=headers, data=params, timeout=15,
-            )
+            resp = session.post(_INVESTING_URL, data=params, timeout=15)
             resp.raise_for_status()
             html = resp.json().get("data", "")
             break
         except requests.exceptions.HTTPError as e:
             last_error = e
-            if resp.status_code == 403 and attempt < 2:
-                time.sleep(2 * (attempt + 1))
-                continue
+            if resp.status_code == 403:
+                # Force session refresh on next attempt
+                _session = None
+                _session_ts = 0
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
             raise
     if html is None:
         raise last_error

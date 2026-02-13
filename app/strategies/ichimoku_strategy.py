@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 from app.services.firebase import get_firestore
 from app.services.log_service import log_to_firestore, log_trade_event
 from app.config.instrument_map import resolve_instrument
-from app.services.calendar_service import check_high_impact_nearby, get_all_upcoming_events
-from app.services.ichimoku_analyzer import rule_based_filter, gpt_macro_analysis
+from app.services.calendar_service import check_high_impact_nearby
+from app.services.ichimoku_analyzer import rule_based_filter
 from app.services.shared_strategy_tools import (
     get_entry_price, calculate_sl_tp, compute_position_size, execute_trade
 )
@@ -12,7 +12,6 @@ from app.services.shared_strategy_tools import (
 STRATEGY_KEY = "ichimoku"
 DEFAULT_RISK_CHF = 50
 DEFAULT_RISK_USD = 50
-MIN_CONFIDENCE = 60
 
 
 def process_webhook_signal(body: dict) -> dict:
@@ -71,7 +70,6 @@ def process_webhook_signal(body: dict) -> dict:
 
     # 4. Check calendrier economique — skip for crypto (no macro events)
     news_check = None
-    macro_result = None
 
     if broker == "oanda":
         news_check = check_high_impact_nearby(instrument)
@@ -97,45 +95,11 @@ def process_webhook_signal(body: dict) -> dict:
             return {"status": "REJECT", "reason": "High-impact economic event nearby", "news_check": news_check}
     else:
         log_to_firestore(
-            f"[{STRATEGY_KEY}] Crypto ({broker}): news check & GPT macro skipped",
+            f"[{STRATEGY_KEY}] Crypto ({broker}): news check skipped",
             level="WEBHOOK"
         )
 
-    # 5. GPT : analyse macro globale → biais directionnel (OANDA only)
-    if broker == "oanda":
-        all_events = get_all_upcoming_events()
-        macro_result = gpt_macro_analysis(instrument, all_events)
-
-        log_to_firestore(
-            f"[{STRATEGY_KEY}] GPT Macro: {macro_result.get('bias')} (confidence: {macro_result.get('confidence')}) - {macro_result.get('analysis', '')[:100]}",
-            level="WEBHOOK"
-        )
-
-        # Verifier alignement biais macro / direction du trade
-        macro_bias = macro_result.get("bias", "NEUTRAL")
-        bias_aligned = (
-            (direction == "LONG" and macro_bias == "BULLISH") or
-            (direction == "SHORT" and macro_bias == "BEARISH")
-        )
-        if not bias_aligned and macro_bias != "NEUTRAL":
-            db.collection("strategies").document(STRATEGY_KEY).collection("gpt_rejections").add({
-                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "instrument": instrument,
-                "signal_direction": direction,
-                "gpt_bias": macro_bias,
-                "gpt_confidence": macro_result.get("confidence"),
-                "gpt_analysis": macro_result.get("analysis"),
-                "ichimoku_reasons": rb_result["reasons"],
-                "signal_data": signal,
-            })
-            return {
-                "status": "REJECT",
-                "reason": f"Macro bias ({macro_bias}) oppose au signal ({direction})",
-                "gpt_macro": macro_result
-            }
-
-    # 6. Execution
+    # 5. Execution
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # Verifier pas de trade deja ouvert aujourd'hui pour cet instrument + direction
@@ -210,7 +174,7 @@ def process_webhook_signal(body: dict) -> dict:
         log_to_firestore(f"[{STRATEGY_KEY}] Erreur execution: {e}", level="ERROR")
         return {"status": "ERROR", "reason": f"Execution failed: {e}"}
 
-    # 7. Sauvegarder dans Firestore
+    # 6. Sauvegarder dans Firestore
     trade_id = f"{today}_{instrument}_{direction}"
     trade_ref = db.collection("strategies").document(STRATEGY_KEY).collection("trades").document(trade_id)
 
@@ -245,9 +209,6 @@ def process_webhook_signal(body: dict) -> dict:
     # OANDA-specific fields
     if broker == "oanda":
         trade_data["risk_chf"] = risk_amount
-        trade_data["gpt_macro_bias"] = macro_result.get("bias") if macro_result else None
-        trade_data["gpt_macro_confidence"] = macro_result.get("confidence") if macro_result else None
-        trade_data["gpt_macro_analysis"] = macro_result.get("analysis") if macro_result else None
         trade_data["news_check"] = news_check
 
     trade_ref.set(trade_data)
@@ -281,7 +242,6 @@ def process_webhook_signal(body: dict) -> dict:
         "broker": broker,
     }
     if broker == "oanda":
-        response_data["gpt_macro"] = macro_result
         response_data["oanda_trade_id"] = result.get("oanda_trade_id")
     else:
         response_data["kraken_txid"] = result.get("trade_id")

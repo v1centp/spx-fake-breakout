@@ -10,17 +10,22 @@ def get_logs(
     contains: str = Query(None),
     tag: str = Query(None),
     trade_id: str = Query(None),
+    date: str = Query(None),
 ):
     db = get_firestore()
 
     # Extend search volume when filtering client-side
-    needs_filter = contains or tag or trade_id
+    needs_filter = contains or tag or trade_id or date
     search_limit = 1000 if needs_filter else limit
 
     query = db.collection("execution_logs")
 
     if level:
         query = query.where("level", "==", level.upper())
+
+    # Server-side date range filter on ISO timestamp string
+    if date:
+        query = query.where("timestamp", ">=", date).where("timestamp", "<=", date + "T23:59:59")
 
     query = query.order_by("timestamp", direction="DESCENDING")
 
