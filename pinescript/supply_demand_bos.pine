@@ -1,0 +1,203 @@
+// This Pine Script(R) is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Supply & Demand BOS Strategy - Doyle's 3 confirmations: BOS + 200 EMA + Zone Rejection
+
+//@version=5
+indicator("Supply & Demand BOS", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// ─── INPUTS ───────────────────────────────────────────────
+webhookSecret = input.string("",  "Webhook Secret",       tooltip="Secret partage avec le serveur")
+pivotLen      = input.int(5,      "Pivot Lookback",       minval=1, maxval=50)
+emaLen        = input.int(200,    "EMA Length",            minval=1)
+minRej        = input.int(2,      "Min Rejections",        minval=1, maxval=10)
+rrRatio       = input.float(3.0,  "R:R Ratio (visual)",    minval=1.0, step=0.5)
+maxAge        = input.int(100,    "Max Zone Age (bars)",    minval=10, maxval=500)
+maxZones      = input.int(5,      "Max Active Zones",       minval=1, maxval=20)
+
+// ─── EMA ──────────────────────────────────────────────────
+ema200 = ta.ema(close, emaLen)
+plot(ema200, "200 EMA", color=color.orange, linewidth=2)
+
+// ─── PIVOT DETECTION ──────────────────────────────────────
+pvtHigh = ta.pivothigh(high, pivotLen, pivotLen)
+pvtLow  = ta.pivotlow(low, pivotLen, pivotLen)
+
+// Track latest swing high/low values and their bar indices + candle OHLC
+var float lastSwingHigh     = na
+var int   lastSwingHighBar  = na
+var float lastSwingHighO    = na
+var float lastSwingHighC    = na
+var float lastSwingHighL    = na
+
+var float lastSwingLow      = na
+var int   lastSwingLowBar   = na
+var float lastSwingLowH     = na
+var float lastSwingLowO     = na
+var float lastSwingLowC     = na
+
+// Pivots are detected pivotLen bars ago
+if not na(pvtHigh)
+    lastSwingHigh    := pvtHigh
+    lastSwingHighBar := bar_index - pivotLen
+    lastSwingHighO   := open[pivotLen]
+    lastSwingHighC   := close[pivotLen]
+    lastSwingHighL   := low[pivotLen]
+
+if not na(pvtLow)
+    lastSwingLow     := pvtLow
+    lastSwingLowBar  := bar_index - pivotLen
+    lastSwingLowH    := high[pivotLen]
+    lastSwingLowO    := open[pivotLen]
+    lastSwingLowC    := close[pivotLen]
+
+// ─── ZONE STORAGE (parallel arrays) ──────────────────────
+var array<float> zTop       = array.new_float()
+var array<float> zBottom    = array.new_float()
+var array<int>   zDir       = array.new_int()       // 1 = demand, -1 = supply
+var array<int>   zBirthBar  = array.new_int()
+var array<int>   zRejCount  = array.new_int()
+var array<bool>  zFired     = array.new_bool()
+var array<int>   zSwingIdx  = array.new_int()
+var array<box>   zBoxId     = array.new_box()
+
+// ─── HELPER: check if swing bar already used ─────────────
+_swingAlreadyUsed(barIdx) =>
+    found = false
+    if array.size(zSwingIdx) > 0
+        for i = 0 to array.size(zSwingIdx) - 1
+            if array.get(zSwingIdx, i) == barIdx
+                found := true
+                break
+    found
+
+// ─── SIGNAL TRACKING (series for plotshape) ──────────────
+var bool longSignal  = false
+var bool shortSignal = false
+longSignal  := false
+shortSignal := false
+
+// ─── MAIN LOGIC (confirmed bars only) ────────────────────
+if barstate.isconfirmed
+
+    // ── BOS Detection ────────────────────────────────────
+    // Bullish BOS: close breaks above last swing high
+    bullishBOS = not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+    // Bearish BOS: close breaks below last swing low
+    bearishBOS = not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+
+    // ── Create demand zone on bullish BOS ────────────────
+    if bullishBOS and not na(lastSwingLowBar) and not _swingAlreadyUsed(lastSwingLowBar)
+        zoneBottom = lastSwingLow
+        zoneTop    = math.max(lastSwingLowO, lastSwingLowC)
+        // Ensure zone has minimum thickness
+        if zoneTop > zoneBottom
+            array.push(zTop, zoneTop)
+            array.push(zBottom, zoneBottom)
+            array.push(zDir, 1)
+            array.push(zBirthBar, bar_index)
+            array.push(zRejCount, 0)
+            array.push(zFired, false)
+            array.push(zSwingIdx, lastSwingLowBar)
+            array.push(zBoxId, box.new(lastSwingLowBar, zoneTop, bar_index, zoneBottom, border_color=color.new(color.green, 60), bgcolor=color.new(color.green, 85)))
+            label.new(bar_index, lastSwingHigh, "BOS+", style=label.style_label_down, color=color.new(color.green, 30), textcolor=color.white, size=size.small)
+
+    // ── Create supply zone on bearish BOS ────────────────
+    if bearishBOS and not na(lastSwingHighBar) and not _swingAlreadyUsed(lastSwingHighBar)
+        zoneTop    = lastSwingHigh
+        zoneBottom = math.min(lastSwingHighO, lastSwingHighC)
+        if zoneTop > zoneBottom
+            array.push(zTop, zoneTop)
+            array.push(zBottom, zoneBottom)
+            array.push(zDir, -1)
+            array.push(zBirthBar, bar_index)
+            array.push(zRejCount, 0)
+            array.push(zFired, false)
+            array.push(zSwingIdx, lastSwingHighBar)
+            array.push(zBoxId, box.new(lastSwingHighBar, zoneTop, bar_index, zoneBottom, border_color=color.new(color.red, 60), bgcolor=color.new(color.red, 85)))
+            label.new(bar_index, lastSwingLow, "BOS-", style=label.style_label_up, color=color.new(color.red, 30), textcolor=color.white, size=size.small)
+
+    // ── Process active zones (backward for safe removal) ─
+    i = array.size(zTop) - 1
+    while i >= 0
+        zt   = array.get(zTop, i)
+        zb   = array.get(zBottom, i)
+        dir  = array.get(zDir, i)
+        age  = bar_index - array.get(zBirthBar, i)
+        rej  = array.get(zRejCount, i)
+        fired = array.get(zFired, i)
+        bx   = array.get(zBoxId, i)
+
+        remove = false
+
+        // ── Invalidation ─────────────────────────────────
+        if dir == 1 and close < zb
+            remove := true
+        if dir == -1 and close > zt
+            remove := true
+
+        // ── Expiration ───────────────────────────────────
+        if age > maxAge
+            remove := true
+
+        if remove
+            box.delete(bx)
+            array.remove(zTop, i)
+            array.remove(zBottom, i)
+            array.remove(zDir, i)
+            array.remove(zBirthBar, i)
+            array.remove(zRejCount, i)
+            array.remove(zFired, i)
+            array.remove(zSwingIdx, i)
+            array.remove(zBoxId, i)
+            i -= 1
+            continue
+
+        // ── Extend box right edge ────────────────────────
+        box.set_right(bx, bar_index)
+
+        // ── Rejection counting ───────────────────────────
+        if not fired
+            if dir == 1
+                // Demand: wick into zone (low touches zone) but close stays above
+                if low <= zt and close > zt
+                    array.set(zRejCount, i, rej + 1)
+                    rej += 1
+            else
+                // Supply: wick into zone (high touches zone) but close stays below
+                if high >= zb and close < zb
+                    array.set(zRejCount, i, rej + 1)
+                    rej += 1
+
+            // ── Signal check ─────────────────────────────
+            emaOK = (dir == 1 and close > ema200) or (dir == -1 and close < ema200)
+
+            if rej >= minRej and emaOK
+                array.set(zFired, i, true)
+
+                if dir == 1
+                    longSignal := true
+                else
+                    shortSignal := true
+
+                direction = dir == 1 ? "LONG" : "SHORT"
+
+                // Webhook alert
+                alertMsg = '{"secret":"' + webhookSecret + '","strategy":"supply_demand","symbol":"' + syminfo.tickerid + '","direction":"' + direction + '","close":' + str.tostring(close) + ',"zone_top":' + str.tostring(zt) + ',"zone_bottom":' + str.tostring(zb) + '}'
+                alert(alertMsg, alert.freq_once_per_bar_close)
+
+        i -= 1
+
+    // ── Trim oldest zones if exceeding maxZones ──────────
+    while array.size(zTop) > maxZones
+        box.delete(array.get(zBoxId, 0))
+        array.remove(zTop, 0)
+        array.remove(zBottom, 0)
+        array.remove(zDir, 0)
+        array.remove(zBirthBar, 0)
+        array.remove(zRejCount, 0)
+        array.remove(zFired, 0)
+        array.remove(zSwingIdx, 0)
+        array.remove(zBoxId, 0)
+
+// ─── VISUAL SIGNALS ──────────────────────────────────────
+plotshape(longSignal,  "Long Signal",  shape.triangleup,   location.belowbar, color.green, size=size.normal)
+plotshape(shortSignal, "Short Signal", shape.triangledown, location.abovebar, color.red,   size=size.normal)
