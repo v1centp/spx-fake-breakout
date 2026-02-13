@@ -45,24 +45,56 @@ _INVESTING_COUNTRY_IDS = {
 }
 
 _INVESTING_URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
-_USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0",
+
+# Each entry: (User-Agent, sec-ch-ua, sec-ch-ua-platform, sec-ch-ua-mobile)
+# Keeps UA + client hints consistent to avoid fingerprint mismatch detection
+_BROWSER_PROFILES = [
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.7120.0 Safari/537.36",
+        '"Chromium";v="133", "Google Chrome";v="133", "Not?A_Brand";v="99"',
+        '"Windows"',
+        "?0",
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.7120.0 Safari/537.36",
+        '"Chromium";v="133", "Google Chrome";v="133", "Not?A_Brand";v="99"',
+        '"macOS"',
+        "?0",
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.6834.160 Safari/537.36",
+        '"Chromium";v="132", "Google Chrome";v="132", "Not?A_Brand";v="99"',
+        '"Windows"',
+        "?0",
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.6834.160 Safari/537.36",
+        '"Chromium";v="132", "Google Chrome";v="132", "Not?A_Brand";v="99"',
+        '"macOS"',
+        "?0",
+    ),
 ]
-_INVESTING_BASE_HEADERS = {
-    "X-Requested-With": "XMLHttpRequest",
-    "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Referer": "https://www.investing.com/economic-calendar/",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": "https://www.investing.com",
-    "sec-fetch-dest": "empty",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-origin",
-    "sec-ch-ua-platform": '"Windows"',
-}
+
+def _build_headers(profile=None):
+    """Build request headers from a browser profile with consistent client hints."""
+    if profile is None:
+        profile = random.choice(_BROWSER_PROFILES)
+    ua, sec_ch_ua, platform, mobile = profile
+    return {
+        "User-Agent": ua,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.investing.com/economic-calendar/",
+        "Origin": "https://www.investing.com",
+        "sec-ch-ua": sec_ch_ua,
+        "sec-ch-ua-mobile": mobile,
+        "sec-ch-ua-platform": platform,
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+    }
 
 
 def parse_numeric_value(raw: str) -> float | None:
@@ -176,6 +208,8 @@ def _get_investing_session() -> requests.Session:
 
     Investing.com sets anti-bot cookies on the initial page load.
     Re-using them in subsequent API calls prevents 403 errors.
+    The same browser profile (UA + sec-ch-ua) is used for both the
+    cookie-fetch and subsequent API calls to avoid fingerprint mismatch.
     """
     global _session, _session_ts
 
@@ -183,17 +217,34 @@ def _get_investing_session() -> requests.Session:
     if _session and now - _session_ts < _SESSION_TTL:
         return _session
 
+    profile = random.choice(_BROWSER_PROFILES)
+    ua = profile[0]
+
     s = requests.Session()
-    ua = random.choice(_USER_AGENTS)
-    s.headers.update({**_INVESTING_BASE_HEADERS, "User-Agent": ua})
+    s.headers.update(_build_headers(profile))
 
     try:
-        # Visit the calendar page to collect cookies
+        # Visit the calendar page to collect cookies (use page-load headers)
         s.get(
             "https://www.investing.com/economic-calendar/",
-            headers={"User-Agent": ua, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+            headers={
+                "User-Agent": ua,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Accept-Language": "en-US,en;q=0.9",
+                "sec-ch-ua": profile[1],
+                "sec-ch-ua-mobile": profile[3],
+                "sec-ch-ua-platform": profile[2],
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "none",
+                "sec-fetch-user": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            },
             timeout=15,
         )
+        # Small delay to mimic real browser behavior
+        time.sleep(random.uniform(0.5, 1.5))
     except Exception:
         pass  # best-effort — POST may still work without cookies
 
@@ -242,11 +293,15 @@ def _fetch_investing_day_events(event_date: str) -> list:
         except requests.exceptions.HTTPError as e:
             last_error = e
             if resp.status_code == 403:
-                # Force session refresh on next attempt
+                log_to_firestore(
+                    f"[NewsData] 403 on attempt {attempt + 1}/3, refreshing session",
+                    level="WARN"
+                )
+                # Force full session refresh on next attempt
                 _session = None
                 _session_ts = 0
                 if attempt < 2:
-                    time.sleep(2 * (attempt + 1))
+                    time.sleep(3 * (attempt + 1))  # 3s, 6s backoff
                     continue
             raise
     if html is None:
